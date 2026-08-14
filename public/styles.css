@@ -288,3 +288,44 @@ canvas { width: 100%; height: 240px; background: var(--bg-soft); border: 1px sol
 .options-details summary::-webkit-details-marker { display: none; }
 .options-details summary::before { content: '▸ '; }
 .options-details[open] summary::before { content: '▾ '; }
+
+/* ---------- NARRATIVE CARD ---------- */
+.narrative-card {
+  background: linear-gradient(135deg, var(--card) 0%, #1a2a4a 100%);
+  border-color: var(--accent);
+}
+.narrative-card h3 { color: var(--accent); }
+
+/* ---------- SCORECARD ---------- */
+.scorecard-card {
+  border-color: var(--accent);
+  border-width: 1px;
+}
+
+/* ---------- SIGNAL CARD SECTION HEADINGS ---------- */
+.card h3 {
+  margin: 0 0 10px;
+  font-size: 14px;
+  color: var(--text);
+}
+
+/* ---------- SENTIMENT BAR DUAL (retail) ---------- */
+.sentiment-bar.dual {
+  display: flex;
+  gap: 2px;
+}
+.sentiment-bar.dual .sentiment-bar-fill {
+  height: 100%;
+}
+
+/* ---------- EARNINGS SURPRISE ROWS ---------- */
+.signal-grid .surprise-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 0;
+}
+
+@media (max-width: 600px) {
+  .signal-grid { grid-template-columns: 1fr; }
+  .detail-grid { grid-template-columns: 1fr; }
+}

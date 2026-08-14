@@ -19,13 +19,14 @@ const QUOTE_FIELDS = [
   'priceToBook', 'beta', 'fiftyDayAverage', 'twoHundredDayAverage',
   'bookValue', 'sharesOutstanding', 'heldPercentInsiders',
   'heldPercentInstitutions', 'floatShares',
+  'sharesShort', 'sharesShortPriorMonth', 'shortRatio',
+  'shortPercentOfFloat', 'dateShortInterest',
 ].join(',');
 
 // Modules requested from v10/quoteSummary for the value-investor fundamentals.
-// (Field locations verified against the live endpoint: P/B, beta, moving
-// averages and ownership live in defaultKeyStatistics/summaryDetail, while
-// sector/industry live in assetProfile.)
-const FUND_MODULES = 'price,summaryDetail,defaultKeyStatistics,financialData,assetProfile';
+// + recommendationTrend, calendarEvents, earningsHistory, earningsTrend for
+// analyst ratings, earnings surprises, dividends.
+const FUND_MODULES = 'price,summaryDetail,defaultKeyStatistics,financialData,assetProfile,recommendationTrend,calendarEvents,earningsHistory,earningsTrend';
 
 const CRUMB_KEY = new Request('https://internal/yahoo-session');
 const CRUMB_TTL = 10 * 60 * 1000;
@@ -139,6 +140,11 @@ export async function getQuotes(symbols) {
         heldPercentInstitutions: q.heldPercentInstitutions ?? null,
         floatShares: q.floatShares ?? null,
         bookValue: q.bookValue ?? null,
+        sharesShort: q.sharesShort ?? null,
+        shortRatio: q.shortRatio ?? null,
+        shortPercentOfFloat: q.shortPercentOfFloat ?? null,
+        dateShortInterest: q.dateShortInterest ?? null,
+        sharesShortPriorMonth: q.sharesShortPriorMonth ?? null,
       });
     }
   }
@@ -163,6 +169,66 @@ function normalizeFundamental(result) {
   const dks = result?.defaultKeyStatistics || {};
   const fd = result?.financialData || {};
   const ap = result?.assetProfile || {};
+  const rt = result?.recommendationTrend?.trend || [];
+  const cal = result?.calendarEvents?.earnings || {};
+  const eHist = result?.earningsHistory?.history || [];
+  const eTrend = result?.earningsTrend?.trend || [];
+
+  // Analyst: latest period (0m) from recommendationTrend
+  const latestRT = rt.find(t => t.period === '0m') || rt[0] || null;
+  const analystConsensus = fd?.recommendationKey || null;
+  const analystMean = qRaw(fd, 'recommendationMean');
+  const targetMean = qRaw(fd, 'targetMeanPrice');
+  const targetHigh = qRaw(fd, 'targetHighPrice');
+  const targetLow = qRaw(fd, 'targetLowPrice');
+  const targetMedian = qRaw(fd, 'targetMedianPrice');
+  const numAnalysts = qRaw(fd, 'numberOfAnalystOpinions');
+  const analystBreakdown = latestRT ? {
+    strongBuy: latestRT.strongBuy ?? null,
+    buy: latestRT.buy ?? null,
+    hold: latestRT.hold ?? null,
+    sell: latestRT.sell ?? null,
+    strongSell: latestRT.strongSell ?? null,
+  } : null;
+
+  // Earnings: next date, historical surprises
+  const nextEarningsDate = cal?.formattedDate || cal?.date || null;
+  const earningsEstimate = eTrend.find(t => t.period === '0q' || t.period === '0cq') || eTrend[0] || null;
+  const epsEstimate = earningsEstimate?.earningsEstimate?.avg?.raw ?? null;
+  const epsEstimateHigh = earningsEstimate?.earningsEstimate?.high?.raw ?? null;
+  const epsEstimateLow = earningsEstimate?.earningsEstimate?.low?.raw ?? null;
+
+  // Earnings surprise history (most recent 8 quarters)
+  const surpriseHistory = eHist.slice(0, 8).map(h => ({
+    quarter: h.quarter || null,
+    year: h.year ?? null,
+    epsActual: h.epsActual?.raw ?? null,
+    epsEstimate: h.epsEstimate?.raw ?? null,
+    surprisePercent: h.surprisePercent?.raw ?? null,
+  }));
+
+  // Beat streak: consecutive quarters where actual > estimate
+  let beatStreak = 0;
+  for (const h of eHist) {
+    if (h.epsActual?.raw != null && h.epsEstimate?.raw != null) {
+      if (h.epsActual.raw >= h.epsEstimate.raw) beatStreak++;
+      else break;
+    } else break;
+  }
+
+  // Dividends
+  const dividendRate = qRaw(sd, 'dividendRate');
+  const dividendYieldQ = qRaw(sd, 'dividendYield');
+  const exDividendDate = qRaw(sd, 'exDividendDate');
+  const payoutRatio = qRaw(sd, 'payoutRatio');
+
+  // Short interest (from v7 quote fields — these live in summaryDetail/defaultKeyStatistics)
+  const sharesShortVal = qRaw(dks, 'sharesShort');
+  const shortRatioVal = qRaw(dks, 'shortRatio');
+  const shortPctFloat = qRaw(dks, 'shortPercentOfFloat');
+  const dateShortInterestVal = qRaw(dks, 'dateShortInterest');
+  const sharesShortPriorVal = qRaw(dks, 'sharesShortPriorMonth');
+
   return {
     symbol: price.symbol || (result?.symbol) || null,
     name: price.shortName || price.longName || price.symbol || null,
@@ -176,7 +242,7 @@ function normalizeFundamental(result) {
     marketCap: qRaw(price, 'marketCap'),
     pe: qRaw(sd, 'trailingPE'),
     forwardPe: qRaw(sd, 'forwardPE'),
-    dividendYield: qRaw(sd, 'dividendYield'),
+    dividendYield: dividendYieldQ,
     sector: ap.sector || 'Unknown',
     industry: ap.industry || null,
     currency: price.currency || 'USD',
@@ -206,6 +272,18 @@ function normalizeFundamental(result) {
     floatShares: qRaw(dks, 'floatShares'),
     bookValue: qRaw(dks, 'bookValue'),
     fullTimeEmployees: qRaw(ap, 'fullTimeEmployees'),
+    // Analyst
+    analystConsensus, analystMean, targetMean, targetHigh, targetLow, targetMedian,
+    numAnalysts, analystBreakdown,
+    // Earnings
+    nextEarningsDate, epsEstimate, epsEstimateHigh, epsEstimateLow,
+    surpriseHistory, beatStreak,
+    // Dividends
+    dividendRate, exDividendDate, payoutRatio,
+    // Short interest
+    sharesShort: sharesShortVal, shortRatio: shortRatioVal,
+    shortPercentOfFloat: shortPctFloat, dateShortInterest: dateShortInterestVal,
+    sharesShortPriorMonth: sharesShortPriorVal,
   };
 }
 

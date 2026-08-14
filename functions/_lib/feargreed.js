@@ -1,11 +1,39 @@
 // Fear & Greed / market sentiment data. Free, no key.
-// Primary: alternative.me crypto Fear & Greed Index.
-// We also compute a simple VIX-based market fear gauge via Yahoo.
+// Primary: FearGreedChart.com US stock market index (5 components).
+// Fallback: alternative.me crypto Fear & Greed Index.
+// Plus VIX-based fear gauge via Yahoo.
 
 import { cachedJson, UA } from './cache.js';
 
-// Fetch the Fear & Greed Index from alternative.me (crypto-based, but widely used).
-// Returns { value, classification, timestamp } or null on failure.
+// --- US Stock Market Fear & Greed Index (FearGreedChart.com, no key) ---
+// 5-component index: Volatility (25%), Momentum (25%), Put/Call (20%),
+// Safe Haven (15%), Junk Bond Appetite (15%).
+export async function getUsFearGreed() {
+  const url = 'https://api.feargreedchart.com/?action=all';
+  try {
+    const { data } = await cachedJson(url, 900, {
+      'User-Agent': UA,
+      Accept: 'application/json',
+    });
+    if (!data?.score) return null;
+    const score = data.score;
+    const classification = score.score <= 25 ? 'Extreme Fear'
+      : score.score <= 45 ? 'Fear'
+      : score.score <= 55 ? 'Neutral'
+      : score.score <= 75 ? 'Greed'
+      : 'Extreme Greed';
+    return {
+      score: score.score,
+      classification,
+      components: score.components || [],
+      timestamp: data.score.timestamp || null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// --- Crypto Fear & Greed (alternative.me, fallback) ---
 export async function getFearGreed() {
   const url = 'https://api.alternative.me/fng/?limit=1';
   try {
@@ -22,8 +50,7 @@ export async function getFearGreed() {
   }
 }
 
-// Fetch VIX from Yahoo and compute a simple fear score (0-100).
-// VIX < 15 = extreme greed, 15-20 = greed/neutral, 20-30 = fear, >30 = extreme fear.
+// --- VIX fear gauge via Yahoo ---
 export async function getVixFear() {
   const url =
     'https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?range=5d&interval=1d';
@@ -32,7 +59,6 @@ export async function getVixFear() {
     const closes = data?.chart?.result?.[0]?.indicators?.quote?.[0]?.close || [];
     const latest = closes.filter(v => v != null).pop();
     if (latest == null) return null;
-    // Map VIX to 0-100 fear score (inverted: high VIX = high fear)
     let score;
     if (latest <= 12) score = 10;
     else if (latest <= 15) score = 25;
@@ -53,13 +79,14 @@ export async function getVixFear() {
   }
 }
 
-// Combined market sentiment. Aggregates fear/greed + VIX.
+// --- Combined market sentiment ---
 export async function getMarketSentiment() {
-  const [fg, vix] = await Promise.allSettled([getFearGreed(), getVixFear()]);
+  const [usFg, fg, vix] = await Promise.allSettled([getUsFearGreed(), getFearGreed(), getVixFear()]);
   return {
     available: true,
+    usFearGreed: usFg.status === 'fulfilled' ? usFg.value : null,
     fearGreed: fg.status === 'fulfilled' ? fg.value : null,
     vix: vix.status === 'fulfilled' ? vix.value : null,
-    degraded: fg.status !== 'fulfilled' && vix.status !== 'fulfilled',
+    degraded: usFg.status !== 'fulfilled' && fg.status !== 'fulfilled' && vix.status !== 'fulfilled',
   };
 }

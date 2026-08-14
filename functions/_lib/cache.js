@@ -28,6 +28,23 @@ async function store(url, text, contentType) {
   await caches.default.put(new Request(url), response);
 }
 
+// Fetch with retry on 429/503. Max 2 retries, exponential backoff.
+async function retryFetch(url, opts = {}, retries = 2) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const res = await fetch(url, opts);
+    if (res.status === 429 || res.status === 503) {
+      if (attempt < retries) {
+        const delay = Math.min(1000 * 2 ** attempt, 4000);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+    }
+    return res;
+  }
+  // Unreachable but TypeScript-safe
+  return fetch(url, opts);
+}
+
 // Fetch JSON with edge caching. Returns { data, cached, stale }.
 // Falls back to a stale cached copy if the upstream errors (graceful degradation).
 // `cacheKey` lets callers cache under a stable URL (e.g. with a rotating crumb
@@ -39,7 +56,7 @@ export async function cachedJson(url, ttlSeconds, extraHeaders = {}, cacheKey = 
     return { data: await hit.response.json(), cached: true, fresh: true };
   }
   try {
-    const upstream = await fetch(url, {
+    const upstream = await retryFetch(url, {
       headers: { ...UA, ...extraHeaders },
       cf: { cacheTtl: ttlSeconds, cacheEverything: true },
     });
@@ -64,7 +81,7 @@ export async function cachedText(url, ttlSeconds, extraHeaders = {}, cacheKey = 
     return { data: await hit.response.text(), cached: true, fresh: true };
   }
   try {
-    const upstream = await fetch(url, {
+    const upstream = await retryFetch(url, {
       headers: { ...UA, ...extraHeaders },
       cf: { cacheTtl: ttlSeconds, cacheEverything: true },
     });
@@ -80,4 +97,4 @@ export async function cachedText(url, ttlSeconds, extraHeaders = {}, cacheKey = 
   }
 }
 
-export { UA };
+export { UA, retryFetch };

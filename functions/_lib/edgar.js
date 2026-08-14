@@ -4,7 +4,7 @@
 // On upstream failure we degrade gracefully (empty arrays) so the rest of the
 // app keeps working.
 
-import { cachedJson, cachedText } from './cache.js';
+import { cachedJson, cachedText, retryFetch } from './cache.js';
 
 // SEC requires a User-Agent that identifies the app and a contact address.
 const EDGAR_UA = {
@@ -229,7 +229,7 @@ async function mistralExtractNames(section, apiKey) {
   if (!apiKey) return [];
   const plain = stripHtml(section).substring(0, 3000);
   try {
-    const res = await fetch('https://api.mistral.ai/v1/chat/completions', {
+    const res = await retryFetch('https://api.mistral.ai/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
@@ -311,8 +311,8 @@ export async function getLeadershipChanges(symbol, months = 12, env = {}) {
   const cutoffMs = months * 30 * 24 * 3600 * 1000;
   const now = Date.now();
 
-  // 1) Fetch recent 8-Ks (limit to 12 for performance)
-  const filings = await getRecentFilings(cikInfo, '8-K', 12);
+  // 1) Fetch recent 8-Ks (limit to 5 to stay within Cloudflare's 30s budget)
+  const filings = await getRecentFilings(cikInfo, '8-K', 5);
 
   // 2) Filter by cutoff and resolve doc URLs (with index.json fallback)
   const toFetch = [];

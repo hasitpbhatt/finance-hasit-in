@@ -11,6 +11,7 @@ import { getCboeOptionChain } from '../../_lib/cboe.js';
 import { getXbrlTrend } from '../../_lib/xbrl.js';
 import { getRetailSentiment } from '../../_lib/stocktwits.js';
 import { json, corsPreflight } from '../../_lib/http.js';
+import { retryFetch } from '../../_lib/cache.js';
 
 function withTimeout(promise, ms) {
   return Promise.race([
@@ -63,7 +64,7 @@ Data:
 ${parts.join('\n')}`;
 
   try {
-    const res = await fetch('https://api.mistral.ai/v1/chat/completions', {
+    const res = await retryFetch('https://api.mistral.ai/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
@@ -102,19 +103,20 @@ export async function onRequest(context) {
   } catch { /* not critical */ }
 
   // All signal sources run concurrently with per-source timeouts.
+  // Total budget: ~25s (leaves 5s headroom for Cloudflare's 30s limit).
   const TIMEOUTS = {
-    insider: 8000,
-    newsIntel: 6000,
-    leadership: 10000,
-    hiring: 5000,
-    options: 8000,
-    analyst: 10000,
-    retail: 5000,
-    xbrl: 12000,
+    insider: 6000,
+    newsIntel: 5000,
+    leadership: 8000,
+    hiring: 4000,
+    options: 6000,
+    analyst: 8000,
+    retail: 4000,
+    xbrl: 10000,
   };
 
   const [insiderR, newsIntelR, leadershipR, hiringR, optionsR, analystR, retailR, xbrlR] = await Promise.allSettled([
-    withTimeout(getInsiderTrades(symbol, 8), TIMEOUTS.insider),
+    withTimeout(getInsiderTrades(symbol, 5), TIMEOUTS.insider),
     withTimeout(getNewsIntel(symbol, companyName), TIMEOUTS.newsIntel),
     withTimeout(getLeadershipChanges(symbol, 12, context.env), TIMEOUTS.leadership),
     withTimeout(getHiring(symbol), TIMEOUTS.hiring),
@@ -277,11 +279,16 @@ export async function onRequest(context) {
 
   // --- Mistral narrative (runs after all signals, uses aggregated data) ---
   try {
-    const narrative = await withTimeout(mistralNarrative(symbol, companyName, result, context.env), 10000);
+    const narrative = await withTimeout(mistralNarrative(symbol, companyName, result, context.env), 8000);
     result.narrative = narrative || { available: false, reason: 'unavailable' };
   } catch {
     result.narrative = { available: false, reason: 'error' };
   }
 
-  return json(result, { headers: { 'Cache-Control': 's-maxage=300' } });
+  return json(result, {
+    headers: {
+      'Cache-Control': 'public, s-maxage=300, max-age=60',
+      'CDN-Cache-Control': 'public, s-maxage=300',
+    },
+  });
 }

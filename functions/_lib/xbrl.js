@@ -29,26 +29,17 @@ const TAG_CANDIDATES = {
   ],
 };
 
-// Try candidate tags in order; return the first one that has data.
-function findConcept(usGaap, candidates) {
-  for (const tag of candidates) {
-    const raw = usGaap[tag]?.units?.USD;
-    if (raw && raw.length) return raw;
-  }
-  return [];
-}
-
 // Extract annual (10-K) FY values, deduped by fiscal year, most recent 5.
 function annualFacts(raw) {
   const fy = raw
-    .filter(f => f.form === '10-K' && f.fy && f.value != null)
+    .filter(f => f.form === '10-K' && f.fy && (f.val ?? f.value) != null)
     .sort((a, b) => (b.fy ?? 0) - (a.fy ?? 0));
   const seen = new Set();
   const out = [];
   for (const f of fy) {
     if (!seen.has(f.fy)) {
       seen.add(f.fy);
-      out.push({ fy: f.fy, value: f.value });
+      out.push({ fy: f.fy, value: f.val ?? f.value });
     }
     if (out.length >= 5) break;
   }
@@ -93,20 +84,35 @@ function verdictLabel(v) {
   return labels[v] || 'Unknown';
 }
 
-// Fetch a single XBRL concept for a ticker.
+// Fetch a single XBRL concept for a ticker. Tries the first 2 tags in parallel
+// and picks the one with the most recent data (companies switch XBRL tags over time).
 async function fetchConcept(cik, concept) {
   const tags = TAG_CANDIDATES[concept];
-  if (!tags) return [];
+  if (!tags || !tags.length) return [];
 
-  for (const tag of tags) {
-    const url = `https://data.sec.gov/api/xbrl/companyconcept/CIK${cik.padded}/us-gaap/${tag}.json`;
-    try {
-      const { data } = await cachedJson(url, XBRL_TTL, EDGAR_UA);
-      const usd = data?.units?.USD;
-      if (usd && usd.length) return usd;
-    } catch { /* try next tag */ }
+  const tryTags = tags.slice(0, 2);
+  const results = await Promise.allSettled(
+    tryTags.map(tag => cachedJson(
+      `https://data.sec.gov/api/xbrl/companyconcept/CIK${cik.padded}/us-gaap/${tag}.json`,
+      XBRL_TTL, EDGAR_UA,
+    ))
+  );
+
+  let best = [];
+  let bestMaxFy = 0;
+  for (const r of results) {
+    if (r.status === 'fulfilled') {
+      const usd = r.value?.data?.units?.USD;
+      if (usd && usd.length) {
+        const maxFy = Math.max(...usd.filter(f => f.fy).map(f => f.fy));
+        if (maxFy >= bestMaxFy) {
+          best = usd;
+          bestMaxFy = maxFy;
+        }
+      }
+    }
   }
-  return [];
+  return best;
 }
 
 // Fetch revenue and net income trends via individual companyconcept calls.

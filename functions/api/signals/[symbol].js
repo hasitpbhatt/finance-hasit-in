@@ -103,16 +103,16 @@ export async function onRequest(context) {
   } catch { /* not critical */ }
 
   // All signal sources run concurrently with per-source timeouts.
-  // Total budget: ~25s (leaves 5s headroom for Cloudflare's 30s limit).
+  // Total budget: ~18s (leaves 12s headroom for Cloudflare's 30s limit + cold starts).
   const TIMEOUTS = {
-    insider: 6000,
-    newsIntel: 5000,
-    leadership: 8000,
-    hiring: 4000,
-    options: 6000,
-    analyst: 8000,
-    retail: 4000,
-    xbrl: 10000,
+    insider: 5000,
+    newsIntel: 4000,
+    leadership: 6000,
+    hiring: 3000,
+    options: 5000,
+    analyst: 6000,
+    retail: 3000,
+    xbrl: 6000,
   };
 
   const [insiderR, newsIntelR, leadershipR, hiringR, optionsR, analystR, retailR, xbrlR] = await Promise.allSettled([
@@ -278,7 +278,7 @@ export async function onRequest(context) {
 
   // --- Mistral narrative (runs after all signals, uses aggregated data) ---
   try {
-    const narrative = await withTimeout(mistralNarrative(symbol, companyName, result, context.env), 8000);
+    const narrative = await withTimeout(mistralNarrative(symbol, companyName, result, context.env), 6000);
     result.narrative = narrative || { available: false, reason: 'unavailable' };
   } catch {
     result.narrative = { available: false, reason: 'error' };

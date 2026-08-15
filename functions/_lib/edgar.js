@@ -314,24 +314,12 @@ export async function getLeadershipChanges(symbol, months = 12, env = {}) {
   // 1) Fetch recent 8-Ks (limit to 5 to stay within Cloudflare's 30s budget)
   const filings = await getRecentFilings(cikInfo, '8-K', 5);
 
-  // 2) Filter by cutoff and resolve doc URLs (with index.json fallback)
+  // 2) Filter by cutoff and resolve doc URLs (skip fallback to save time)
   const toFetch = [];
   for (const f of filings) {
     if (!f.filingDate) continue;
     if (new Date(f.filingDate).getTime() < now - cutoffMs) continue;
-    let docUrl = resolveDocUrl(cikInfo, f);
-    if (!docUrl) {
-      // Try index.json fallback
-      const idxUrl = `https://www.sec.gov/Archives/edgar/data/${cikInfo.cik}/${f.accessionNumber.replace(/-/g, '')}/index.json`;
-      try {
-        const { data: idx } = await cachedJson(idxUrl, FORM4_TTL, EDGAR_UA);
-        const files = idx?.directory?.item || [];
-        const primary = files.find(it => String(it.name || '').toLowerCase().endsWith('.htm'));
-        if (primary?.name) {
-          docUrl = `https://www.sec.gov/Archives/edgar/data/${cikInfo.cik}/${f.accessionNumber.replace(/-/g, '')}/${primary.name}`;
-        }
-      } catch { /* ignore */ }
-    }
+    const docUrl = resolveDocUrl(cikInfo, f);
     if (docUrl) toFetch.push({ filing: f, docUrl });
   }
 

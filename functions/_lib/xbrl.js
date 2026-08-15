@@ -1,6 +1,6 @@
-// SEC EDGAR XBRL companyfacts helpers (free, no key). Fetches all financial
-// data in a SINGLE call via companyfacts, then extracts the specific concepts
-// we need. Computes a layman "trend verdict" from 4-5 fiscal years.
+// SEC EDGAR XBRL companyconcept helpers (free, no key). Fetches individual
+// concepts (revenue, net income) one at a time — lighter than companyfacts
+// which can be 4MB+. Computes a layman "trend verdict" from 4-5 fiscal years.
 // Tag fallback handles the fact that different companies use different XBRL
 // tags for the same economic concept.
 
@@ -12,7 +12,7 @@ const EDGAR_UA = {
   Accept: 'application/json',
 };
 
-const XBRL_TTL = 24 * 3600; // 24 hours (filing data changes quarterly)
+const XBRL_TTL = 24 * 3600; // 24 hours
 
 // Candidate XBRL tags for each concept (priority order).
 const TAG_CANDIDATES = {
@@ -26,17 +26,6 @@ const TAG_CANDIDATES = {
   netIncome: [
     'NetIncomeLoss',
     'ProfitLoss',
-  ],
-  operatingCashFlow: [
-    'NetCashProvidedByUsedInOperatingActivities',
-  ],
-  capex: [
-    'PaymentsToAcquirePropertyPlantAndEquipment',
-  ],
-  eps: [
-    'EarningsPerShareDiluted',
-    'EarningsPerShareBasicAndDiluted',
-    'EarningsPerShareBasic',
   ],
 };
 
@@ -104,74 +93,58 @@ function verdictLabel(v) {
   return labels[v] || 'Unknown';
 }
 
-// Fetch all XBRL facts for a ticker in ONE call, then extract what we need.
+// Fetch a single XBRL concept for a ticker.
+async function fetchConcept(cik, concept) {
+  const tags = TAG_CANDIDATES[concept];
+  if (!tags) return [];
+
+  for (const tag of tags) {
+    const url = `https://data.sec.gov/api/xbrl/companyconcept/CIK${cik.padded}/us-gaap/${tag}.json`;
+    try {
+      const { data } = await cachedJson(url, XBRL_TTL, EDGAR_UA);
+      const usd = data?.units?.USD;
+      if (usd && usd.length) return usd;
+    } catch { /* try next tag */ }
+  }
+  return [];
+}
+
+// Fetch revenue and net income trends via individual companyconcept calls.
+// Only 2-3 calls instead of companyfacts (which can be 4MB+).
 export async function getXbrlTrend(symbol) {
   const cik = await getCik(symbol);
   if (!cik) return null;
 
-  const url = `https://data.sec.gov/api/xbrl/companyfacts/CIK${cik.padded}.json`;
-  let data;
-  try {
-    ({ data } = await cachedJson(url, XBRL_TTL, EDGAR_UA));
-  } catch {
-    return null;
-  }
+  // Fetch only revenue and net income (skip FCF/CapEx/EPS to save time)
+  const [revenueRaw, netIncomeRaw] = await Promise.all([
+    fetchConcept(cik, 'revenue'),
+    fetchConcept(cik, 'netIncome'),
+  ]);
 
-  const usGaap = data?.facts?.['us-gaap'];
-  if (!usGaap) return null;
+  if (!revenueRaw.length && !netIncomeRaw.length) return null;
 
-  const revenueRaw = annualFacts(findConcept(usGaap, TAG_CANDIDATES.revenue));
-  const netIncomeRaw = annualFacts(findConcept(usGaap, TAG_CANDIDATES.netIncome));
-  const ocfRaw = annualFacts(findConcept(usGaap, TAG_CANDIDATES.operatingCashFlow));
-  const capexRaw = annualFacts(findConcept(usGaap, TAG_CANDIDATES.capex));
-  const epsRaw = annualFacts(findConcept(usGaap, TAG_CANDIDATES.eps));
-
-  if (!revenueRaw.length && !netIncomeRaw.length && !ocfRaw.length) return null;
-
-  // Compute FCF from OCF - CapEx
-  const capexByYear = {};
-  for (const c of capexRaw) capexByYear[c.fy] = c.value;
-  const fcf = ocfRaw.map(o => ({
-    fy: o.fy,
-    value: o.value - (capexByYear[o.fy] || 0),
-  }));
-
-  const revenueGrowth = yoyGrowth(revenueRaw);
-  const netIncomeGrowth = yoyGrowth(netIncomeRaw);
-  const fcfGrowth = yoyGrowth(fcf);
-  const epsGrowth = yoyGrowth(epsRaw);
+  const revenue = annualFacts(revenueRaw);
+  const netIncome = annualFacts(netIncomeRaw);
+  const revenueGrowth = yoyGrowth(revenue);
+  const netIncomeGrowth = yoyGrowth(netIncome);
 
   return {
     available: true,
     symbol,
-    latestFY: revenueRaw[0]?.fy || netIncomeRaw[0]?.fy || null,
+    latestFY: revenue[0]?.fy || netIncome[0]?.fy || null,
     revenue: {
-      latest: revenueRaw[0]?.value ?? null,
-      years: revenueRaw.map(r => ({ fy: r.fy, value: r.value })),
+      latest: revenue[0]?.value ?? null,
+      years: revenue.map(r => ({ fy: r.fy, value: r.value })),
       growth: revenueGrowth,
       trend: verdict(revenueGrowth),
       trendLabel: verdictLabel(verdict(revenueGrowth)),
     },
     netIncome: {
-      latest: netIncomeRaw[0]?.value ?? null,
-      years: netIncomeRaw.map(r => ({ fy: r.fy, value: r.value })),
+      latest: netIncome[0]?.value ?? null,
+      years: netIncome.map(r => ({ fy: r.fy, value: r.value })),
       growth: netIncomeGrowth,
       trend: verdict(netIncomeGrowth),
       trendLabel: verdictLabel(verdict(netIncomeGrowth)),
-    },
-    freeCashFlow: {
-      latest: fcf[0]?.value ?? null,
-      years: fcf,
-      growth: fcfGrowth,
-      trend: verdict(fcfGrowth),
-      trendLabel: verdictLabel(verdict(fcfGrowth)),
-    },
-    eps: {
-      latest: epsRaw[0]?.value ?? null,
-      years: epsRaw.map(r => ({ fy: r.fy, value: r.value })),
-      growth: epsGrowth,
-      trend: verdict(epsGrowth),
-      trendLabel: verdictLabel(verdict(epsGrowth)),
     },
   };
 }

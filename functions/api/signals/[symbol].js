@@ -53,7 +53,7 @@ async function mistralNarrative(symbol, companyName, signals, env) {
     parts.push(`Options sentiment: ${signals.options.signals?.sentiment || 'N/A'}`);
   }
   if (signals.xbrl?.available) {
-    parts.push(`Fundamentals trend: Revenue ${signals.xbrl.revenue?.trendLabel || 'N/A'}, Net income ${signals.xbrl.netIncome?.trendLabel || 'N/A'}, FCF ${signals.xbrl.freeCashFlow?.trendLabel || 'N/A'}`);
+    parts.push(`Fundamentals trend: Revenue ${signals.xbrl.revenue?.trendLabel || 'N/A'}, Net income ${signals.xbrl.netIncome?.trendLabel || 'N/A'}`);
   }
 
   if (parts.length === 0) return null;
@@ -122,18 +122,17 @@ export async function onRequest(context) {
     withTimeout(getHiring(symbol), TIMEOUTS.hiring),
     withTimeout((async () => {
       try {
+        const cboe = await getCboeOptionChain(symbol);
+        if (cboe) {
+          const chain = { expirations: cboe.expirations, chain: cboe.chain };
+          return computeOptionSignals(chain, cboe.currentPrice || quote?.price);
+        }
+      } catch { /* CBOE failed */ }
+      try {
         const chain = await getOptionChain(symbol);
         return computeOptionSignals(chain, quote?.price);
-      } catch {
-        try {
-          const cboe = await getCboeOptionChain(symbol);
-          if (cboe) {
-            const chain = { expirations: cboe.expirations, chain: cboe.chain };
-            return computeOptionSignals(chain, cboe.currentPrice || quote?.price);
-          }
-        } catch { /* both failed */ }
-        return null;
-      }
+      } catch { /* Yahoo also failed */ }
+      return null;
     })(), TIMEOUTS.options),
     // Analyst/earnings/dividends/short-interest via getFundamentals (single quoteSummary call)
     withTimeout(getFundamentals(symbol).catch(() => null), TIMEOUTS.analyst),

@@ -7,24 +7,69 @@ function num(v) {
   return Number.isNaN(n) ? null : n;
 }
 
+// Server-side presets (mirror of client PRESETS)
+const PRESETS = {
+  compounder: { peMax: 25, roeMin: 0.15, earningsGrowthMin: 0.1, limit: 20 },
+  cash: { dividendYieldMin: 2, deMax: 1, peMax: 20, limit: 20 },
+  turnaround: { peMax: 15, earningsGrowthMin: 0.05, limit: 20 },
+};
+
+// Server-side NL keyword mapper (mirror of client parseNaturalLanguage)
+function parseNlToParams(nl) {
+  const out = {};
+  const lower = nl.toLowerCase();
+  if (lower.includes('big cap') || lower.includes('large cap') || lower.includes('mega')) out.marketCapMin = 2e11;
+  else if (lower.includes('mid cap') || lower.includes('medium')) { out.marketCapMin = 1e10; out.marketCapMax = 2e11; }
+  else if (lower.includes('small cap')) out.marketCapMax = 1e10;
+  if (lower.includes('etf')) out.type = 'ETF';
+  if (lower.includes('stock')) out.type = 'STOCK';
+  const debtM = lower.match(/debt\s*(?:under|below|less than|<)\s*([\d.]+)/);
+  if (debtM) out.deMax = parseFloat(debtM[1]);
+  const yieldM = lower.match(/yield\s*(?:above|over|more than|>)\s*([\d.]+)/);
+  if (yieldM) out.dividendYieldMin = parseFloat(yieldM[1]);
+  const roeM = lower.match(/roe\s*(?:above|over|more than|>)\s*([\d.]+)/);
+  if (roeM) out.roeMin = parseFloat(roeM[1]);
+  const peM = lower.match(/pe\s*(?:under|below|less than|<)\s*([\d.]+)/);
+  if (peM) out.peMax = parseFloat(peM[1]);
+  if (lower.includes('tech') || lower.includes('technology')) out.sector = 'technology';
+  if (lower.includes('health')) out.sector = 'healthcare';
+  if (lower.includes('profitable') || lower.includes('profit')) out.roeMin = 0.05;
+  if (lower.includes('no debt') || lower.includes('debt free')) out.deMax = 0.1;
+  if (lower.includes('growing') || lower.includes('growth')) out.earningsGrowthMin = 0.05;
+  return out;
+}
+
 export async function onRequest(context) {
   if (context.request.method === 'OPTIONS') return corsPreflight();
   const url = new URL(context.request.url);
   const p = url.searchParams;
 
+  // Resolve preset or NL query into concrete filter params
+  let resolved = {};
+  const presetName = (p.get('preset') || '').trim().toLowerCase();
+  const nlQuery = (p.get('nl') || '').trim();
+
+  if (presetName && PRESETS[presetName]) {
+    resolved = { ...PRESETS[presetName] };
+  } else if (nlQuery) {
+    resolved = parseNlToParams(nlQuery);
+  }
+
+  // Explicit params override preset/NL defaults
   const q = (p.get('q') || '').trim().toLowerCase();
-  const typeFilter = (p.get('type') || 'all').toUpperCase();
-  const marketCapMin = num(p.get('marketCapMin'));
-  const sector = (p.get('sector') || '').trim().toLowerCase();
-  const peMax = num(p.get('peMax'));
-  const dyMin = num(p.get('dividendYieldMin'));
-  const pbMax = num(p.get('pbMax'));
-  const roeMin = num(p.get('roeMin'));
-  const deMax = num(p.get('deMax'));
-  const currentRatioMin = num(p.get('currentRatioMin'));
-  const betaMax = num(p.get('betaMax'));
-  const earningsGrowthMin = num(p.get('earningsGrowthMin'));
-  const limit = Math.min(Math.max(num(p.get('limit')) || 50, 1), 200);
+  const typeFilter = (p.get('type') || resolved.type || 'all').toUpperCase();
+  const marketCapMin = num(p.get('marketCapMin')) ?? resolved.marketCapMin ?? null;
+  const marketCapMax = num(p.get('marketCapMax')) ?? resolved.marketCapMax ?? null;
+  const sector = (p.get('sector') || resolved.sector || '').trim().toLowerCase();
+  const peMax = num(p.get('peMax')) ?? resolved.peMax ?? null;
+  const dyMin = num(p.get('dividendYieldMin')) ?? resolved.dividendYieldMin ?? null;
+  const pbMax = num(p.get('pbMax')) ?? resolved.pbMax ?? null;
+  const roeMin = num(p.get('roeMin')) ?? resolved.roeMin ?? null;
+  const deMax = num(p.get('deMax')) ?? resolved.deMax ?? null;
+  const currentRatioMin = num(p.get('currentRatioMin')) ?? resolved.currentRatioMin ?? null;
+  const betaMax = num(p.get('betaMax')) ?? resolved.betaMax ?? null;
+  const earningsGrowthMin = num(p.get('earningsGrowthMin')) ?? resolved.earningsGrowthMin ?? null;
+  const limit = Math.min(Math.max(num(p.get('limit')) || resolved.limit || 50, 1), 200);
 
   try {
     const deepRequested =
@@ -55,8 +100,9 @@ export async function onRequest(context) {
     }
 
     let rows = quotes.filter((r) => {
-      if (typeFilter !== 'ALL' && r.type !== typeFilter) return false;
+      if (typeFilter !== 'ALL' && (r.type || '').toUpperCase() !== typeFilter) return false;
       if (marketCapMin != null && (r.marketCap == null || r.marketCap < marketCapMin)) return false;
+      if (marketCapMax != null && (r.marketCap == null || r.marketCap > marketCapMax)) return false;
       if (sector && (r.sector || '').toLowerCase().indexOf(sector) === -1) return false;
       if (peMax != null && (r.pe == null || r.pe <= 0 || r.pe > peMax)) return false;
       if (dyMin != null && (r.dividendYield == null || r.dividendYield < dyMin)) return false;

@@ -1,5 +1,6 @@
 // Pages Function: /s/AAPL — serves the SPA shell with the symbol pre-set so
 // the client can render the detail view on first paint (no extra round-trip).
+// Includes dynamic og:title / og:description for share cards.
 
 const SYMBOL_RE = /^[A-Z]{1,6}$/;
 
@@ -15,26 +16,28 @@ export async function onRequest(context) {
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>${raw} — Investment Finder</title>
+    <meta name="description" content="Free investment research for ${raw}. Analyst ratings, insider trades, options, fundamentals, and AI summary." />
+    <meta property="og:title" content="${raw} — Investment Finder" />
+    <meta property="og:description" content="Free investment research for ${raw}. Analyst ratings, insider trades, options, fundamentals, and AI summary." />
+    <meta property="og:type" content="website" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <header class="site-header">
-      <div class="brand">
-        <a href="/" style="text-decoration:none;color:inherit;display:flex;align-items:center;gap:8px">
-          <span class="logo">📈</span>
-          <div>
-            <h1>Investment Finder</h1>
-            <p class="tagline">Free US stocks &amp; ETFs — no account, no API keys.</p>
-          </div>
-        </a>
-      </div>
+      <a href="/" class="brand">
+        <span class="brand-glyph">IF</span>
+        Investment Finder
+      </a>
+
       <div class="search-wrap">
-        <input id="global-search" type="text" placeholder="Search any company (Apple, NVDA)…" autocomplete="off" />
+        <input id="global-search" type="text" placeholder="Search any company…" autocomplete="off" />
+        <kbd>/</kbd>
         <div id="global-search-results" class="search-results hidden"></div>
       </div>
+
       <nav class="tabs">
-        <button class="tab" data-tab="overview">Overview</button>
-        <button class="tab" data-tab="screener">Screener</button>
+        <button class="tab" data-tab="overview">Discover</button>
+        <button class="tab" data-tab="screener">Research</button>
         <button class="tab" data-tab="crypto">Crypto</button>
       </nav>
     </header>
@@ -49,7 +52,7 @@ export async function onRequest(context) {
     </main>
 
     <footer class="site-footer">
-      <p>Data: Yahoo Finance &amp; CoinGecko (free, no key). For educational use only — not investment advice.</p>
+      <p>Data: Yahoo Finance, SEC EDGAR, CoinGecko, StockTwits (free, no key). For educational use only — not investment advice.</p>
     </footer>
 
     <script>window.__INITIAL_SYMBOL__ = "${raw}";</script>

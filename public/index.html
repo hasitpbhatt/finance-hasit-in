@@ -4,48 +4,52 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Investment Finder — free US stocks &amp; ETFs</title>
+    <meta name="description" content="Free investment research. No account, no API keys. Analyst ratings, insider trades, options, fundamentals, and AI summaries." />
+    <meta property="og:title" content="Investment Finder" />
+    <meta property="og:description" content="Free US stocks & ETFs research — no account, no API keys." />
+    <meta property="og:type" content="website" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <header class="site-header">
-      <div class="brand">
-        <span class="logo">📈</span>
-        <div>
-          <h1>Investment Finder</h1>
-          <p class="tagline">Free US stocks &amp; ETFs — no account, no API keys.</p>
-        </div>
-      </div>
+      <a href="/" class="brand">
+        <span class="brand-glyph">IF</span>
+        Investment Finder
+      </a>
+
       <div class="search-wrap">
-        <input id="global-search" type="text" placeholder="Search any company (Apple, NVDA)…" autocomplete="off" />
+        <input id="global-search" type="text" placeholder="Search any company…" autocomplete="off" />
+        <kbd>/</kbd>
         <div id="global-search-results" class="search-results hidden"></div>
       </div>
+
       <nav class="tabs">
-        <button class="tab active" data-tab="overview">Overview</button>
-        <button class="tab" data-tab="screener">Screener</button>
+        <button class="tab active" data-tab="overview">Discover</button>
+        <button class="tab" data-tab="screener">Research</button>
         <button class="tab" data-tab="crypto">Crypto</button>
       </nav>
-      <div id="fear-greed-widget" class="fg-widget hidden"></div>
     </header>
 
     <main>
-      <!-- OVERVIEW -->
+      <!-- DISCOVER -->
       <section id="overview" class="panel active">
+        <div id="fg-strip" class="fg-strip" style="display:none;"></div>
         <div id="overview-status" class="status"></div>
         <div class="grid-2">
           <div class="card">
-            <h2>Top Stock Gainers</h2>
+            <h2>Stock Gainers</h2>
             <div id="ov-stock-gainers" class="mini-list"></div>
           </div>
           <div class="card">
-            <h2>Top Stock Losers</h2>
+            <h2>Stock Losers</h2>
             <div id="ov-stock-losers" class="mini-list"></div>
           </div>
           <div class="card">
-            <h2>Top ETF Gainers</h2>
+            <h2>ETF Gainers</h2>
             <div id="ov-etf-gainers" class="mini-list"></div>
           </div>
           <div class="card">
-            <h2>Top ETF Losers</h2>
+            <h2>ETF Losers</h2>
             <div id="ov-etf-losers" class="mini-list"></div>
           </div>
         </div>
@@ -58,10 +62,17 @@
       <!-- SCREENER -->
       <section id="screener" class="panel">
         <div class="card">
-          <h2>Screener</h2>
-          <form id="screener-form" class="filters">
+          <h2>Find Investments</h2>
+          <input id="f-nl" class="nl-search" type="text" placeholder="Try: "profitable tech, no debt, yield above 3"" />
+          <div class="preset-chips">
+            <button class="preset-chip" data-preset="compounder">Compounder</button>
+            <button class="preset-chip" data-preset="cash">Cash machine</button>
+            <button class="preset-chip" data-preset="turnaround">Turnaround</button>
+          </div>
+          <button class="filters-toggle" id="filters-toggle">Show all filters</button>
+          <form id="screener-form" class="filters" style="display:none;">
             <label>Name / Ticker
-              <input id="f-q" type="text" placeholder="e.g. Apple, NVDA — blank = full universe" />
+              <input id="f-q" type="text" placeholder="e.g. Apple, NVDA" />
             </label>
             <label>Type
               <select id="f-type">
@@ -70,10 +81,10 @@
                 <option value="etf">ETFs</option>
               </select>
             </label>
-            <label>Min Market Cap ($)
+            <label>Min Market Cap
               <input id="f-mcap" type="number" placeholder="e.g. 50000000000" />
             </label>
-            <label>Sector contains
+            <label>Sector
               <input id="f-sector" type="text" placeholder="e.g. Technology" />
             </label>
             <label>Max P/E
@@ -81,24 +92,6 @@
             </label>
             <label>Min Div Yield
               <input id="f-dy" type="number" step="0.1" placeholder="e.g. 2" />
-            </label>
-            <label>Max P/B
-              <input id="f-pb" type="number" step="0.1" placeholder="e.g. 3" />
-            </label>
-            <label>Min ROE
-              <input id="f-roe" type="number" step="0.01" placeholder="0.15 = 15%" />
-            </label>
-            <label>Max D/E
-              <input id="f-de" type="number" step="0.1" placeholder="e.g. 1" />
-            </label>
-            <label>Min Current Ratio
-              <input id="f-cr" type="number" step="0.1" placeholder="e.g. 1.5" />
-            </label>
-            <label>Max Beta
-              <input id="f-beta" type="number" step="0.1" placeholder="e.g. 1.2" />
-            </label>
-            <label>Min Earnings Gr
-              <input id="f-eg" type="number" step="0.01" placeholder="0.1 = 10%" />
             </label>
             <label>Limit
               <input id="f-limit" type="number" value="50" />
@@ -111,8 +104,7 @@
               <thead>
                 <tr>
                   <th>Symbol</th><th>Name</th><th>Type</th><th>Price</th>
-                  <th>Chg %</th><th>Market Cap</th><th>P/E</th><th>P/B</th><th>ROE</th>
-                  <th>D/E</th><th>Cur Ratio</th><th>Beta</th><th>Div Yld</th><th>Sector</th>
+                  <th>Chg %</th><th>Mkt Cap</th><th>P/E</th><th>Div Yld</th>
                 </tr>
               </thead>
               <tbody></tbody>
@@ -145,9 +137,7 @@
     </main>
 
     <footer class="site-footer">
-      <p>
-        Data: Yahoo Finance &amp; CoinGecko (free, no key). For educational use only — not investment advice.
-      </p>
+      <p>Data: Yahoo Finance, SEC EDGAR, CoinGecko, StockTwits (free, no key). For educational use only — not investment advice.</p>
     </footer>
 
     <script src="/app.js"></script>

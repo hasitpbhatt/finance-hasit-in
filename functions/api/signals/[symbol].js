@@ -20,6 +20,115 @@ function withTimeout(promise, ms) {
   ]);
 }
 
+// --- Verdict scoring ---
+const SCORE_WEIGHTS = {
+  analyst: 0.25,
+  fundamentals: 0.20,
+  insider: 0.20,
+  news: 0.15,
+  options: 0.10,
+  retail: 0.10,
+};
+
+function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+
+function scoreAnalyst(a) {
+  if (!a?.available) return null;
+  let s = 0;
+  const c = (a.consensus || '').toLowerCase();
+  if (c.includes('strong_buy') || c === 'buy') s += 40;
+  else if (c === 'hold') s += 0;
+  else if (c.includes('sell')) s -= 30;
+  if (a.upsidePct != null) s += clamp(a.upsidePct * 2, -30, 50);
+  if (a.numAnalysts != null) s += Math.min(a.numAnalysts / 10, 10);
+  return clamp(Math.round(s), -100, 100);
+}
+
+function scoreFundamentals(x) {
+  if (!x?.available) return null;
+  let s = 0;
+  const rev = x.revenue?.trend;
+  const ni = x.netIncome?.trend;
+  if (rev === 'strong_growth') s += 40;
+  else if (rev === 'growing') s += 20;
+  else if (rev === 'declining') s -= 20;
+  else if (rev === 'sharply_declining') s -= 40;
+  if (ni === 'strong_growth') s += 40;
+  else if (ni === 'growing') s += 20;
+  else if (ni === 'declining') s -= 20;
+  else if (ni === 'sharply_declining') s -= 40;
+  return clamp(Math.round(s), -100, 100);
+}
+
+function scoreInsider(s) {
+  if (!s.insiderAvailable || !s.insiderTrades?.length) return null;
+  const buys = s.insiderTrades.filter(t => t.code === 'P').length;
+  const sells = s.insiderTrades.filter(t => t.code === 'S').length;
+  const total = buys + sells;
+  if (total === 0) return null;
+  const ratio = (buys - sells) / total;
+  return clamp(Math.round(ratio * 80), -100, 100);
+}
+
+function scoreNews(n) {
+  if (!n?.available) return null;
+  const sent = n.avgSentiment || 0;
+  return clamp(Math.round(sent * 100), -100, 100);
+}
+
+function scoreOptions(o) {
+  if (!o?.available || !o.signals?.sentiment) return null;
+  const sent = o.signals.sentiment;
+  if (sent === 'Bullish') return 40;
+  if (sent === 'Bearish') return -40;
+  return 0;
+}
+
+function scoreRetail(r) {
+  if (!r?.available) return null;
+  return clamp(Math.round((r.bullPct - r.bearPct) * 1.5), -100, 100);
+}
+
+function computeScore(result) {
+  const factors = [];
+  const weights = SCORE_WEIGHTS;
+
+  const a = scoreAnalyst(result.analyst);
+  if (a != null) factors.push({ key: 'analyst', label: 'Analyst', score: a, weight: weights.analyst });
+
+  const f = scoreFundamentals(result.xbrl);
+  if (f != null) factors.push({ key: 'fundamentals', label: 'Fundamentals', score: f, weight: weights.fundamentals });
+
+  const i = scoreInsider(result);
+  if (i != null) factors.push({ key: 'insider', label: 'Insider', score: i, weight: weights.insider });
+
+  const n = scoreNews(result.newsIntel);
+  if (n != null) factors.push({ key: 'news', label: 'News', score: n, weight: weights.news });
+
+  const o = scoreOptions(result.options);
+  if (o != null) factors.push({ key: 'options', label: 'Options', score: o, weight: weights.options });
+
+  const r = scoreRetail(result.retail);
+  if (r != null) factors.push({ key: 'retail', label: 'Retail', score: r, weight: weights.retail });
+
+  if (factors.length === 0) {
+    return { value: 0, label: 'No data', grade: 'neutral', factors: [], weights };
+  }
+
+  const totalWeight = factors.reduce((s, f) => s + f.weight, 0);
+  const raw = factors.reduce((s, f) => s + f.score * f.weight, 0) / totalWeight;
+  const value = Math.round(raw);
+
+  let grade;
+  if (value >= 30) grade = 'bullish';
+  else if (value >= 10) grade = 'leaning_bullish';
+  else if (value > -10) grade = 'neutral';
+  else if (value > -30) grade = 'leaning_bearish';
+  else grade = 'bearish';
+
+  return { value, label: grade, grade, factors, weights };
+}
+
 // Call Mistral to write a plain-English summary from the collected signals.
 async function mistralNarrative(symbol, companyName, signals, env) {
   const apiKey = env?.MISTRAL_API_KEY || env?.mistralApiKey;
@@ -275,6 +384,9 @@ export async function onRequest(context) {
     signalFlags.redFlag = (keyRoles.length >= 1 || (anyDepartures && recentChanges.length >= 2)) && netInsiderSelling;
   }
   result.signalFlags = signalFlags;
+
+  // --- Verdict score (weighted composite, server-side) ---
+  result.score = computeScore(result);
 
   // --- Mistral narrative (runs after all signals, uses aggregated data) ---
   try {

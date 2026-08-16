@@ -1,5 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "ignoreCommand": "echo functions/",
+  "outputDirectory": "public",
   "rewrites": [
     { "source": "/s/:symbol", "destination": "/api/s/:symbol" }
   ],

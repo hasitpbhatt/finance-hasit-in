@@ -3,6 +3,8 @@
 // All three sources run concurrently.
 
 import { getQuotes, getFundamentalsBatch, getChart, getNews } from '../../../lib/yahoo.js';
+import { getNasdaqQuote } from '../../../lib/nasdaq.js';
+import { computeIndicators, lastNonNull } from '../../../lib/indicators.js';
 import { json, corsPreflight } from '../../../lib/http.js';
 
 export async function onRequest(context) {
@@ -35,9 +37,17 @@ export async function onRequest(context) {
   if (quoteR.status === 'fulfilled' && quoteR.value) {
     Object.assign(result, quoteR.value);
   } else {
-    result.symbol = symbol;
-    result.degraded = true;
-    result.errors.push('quote: ' + (quoteR.reason?.message || 'unavailable'));
+    // Nasdaq fallback: if Yahoo quotes failed entirely, still surface a live
+    // price so the page never shows a blank quote strip.
+    const nasdaq = await getNasdaqQuote(symbol);
+    if (nasdaq) {
+      Object.assign(result, nasdaq);
+      result.errors.push('quote: degraded (Nasdaq fallback)');
+    } else {
+      result.symbol = symbol;
+      result.degraded = true;
+      result.errors.push('quote: ' + (quoteR.reason?.message || 'unavailable'));
+    }
   }
 
   // Chart
@@ -51,6 +61,25 @@ export async function onRequest(context) {
   if (!daily.series.length && !history.length) {
     result.degraded = true;
     result.errors.push('chart: ' + (chartDailyR.reason?.message || chartHistoryR.reason?.message || 'error'));
+  }
+
+  // Technical indicators computed from the dense daily series (null-safe).
+  const closes = daily.series.map(p => p.c).filter(v => v != null);
+  const ind = computeIndicators(closes);
+  if (ind) {
+    result.indicators = {
+      sma20: ind.sma20,
+      sma50: ind.sma50,
+      sma200: ind.sma200,
+      rsi14: ind.rsi14,
+      macd: ind.macd,
+      latest: {
+        sma50: lastNonNull(ind.sma50),
+        sma200: lastNonNull(ind.sma200),
+        rsi14: lastNonNull(ind.rsi14),
+        macdHist: lastNonNull(ind.macd.hist),
+      },
+    };
   }
 
   // News

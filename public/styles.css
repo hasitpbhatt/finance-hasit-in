@@ -541,6 +541,9 @@ canvas#detail-canvas {
 .chart-range-btn:hover { color: var(--text); border-color: var(--muted); }
 .chart-range-btn.active { color: var(--text); background: var(--bg-soft); border-color: var(--muted); font-weight: 600; }
 
+.chart-indicators { display: flex; flex-wrap: wrap; gap: 6px; margin-top: var(--space-2); }
+.chart-indicators .chip { font-size: 11px; padding: 3px 10px; }
+
 .chart-tooltip {
   position: absolute;
   pointer-events: none;

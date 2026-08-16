@@ -199,7 +199,7 @@ function sliceSeriesByRange(chart, range) {
   return sliced.length ? sliced : full;
 }
 
-function drawChart(chart, range) {
+function drawChart(chart, range, indicators) {
   const canvas = $('#detail-canvas');
   if (!canvas) return;
   const series = sliceSeriesByRange(chart, range);
@@ -219,9 +219,21 @@ function drawChart(chart, range) {
     return;
   }
 
+  // Align SMA overlay arrays to the sliced series by timestamp.
+  function alignByTime(full, indArray) {
+    const byT = new Map();
+    for (let i = 0; i < full.length; i++) byT.set(full[i].t, indArray[i]);
+    return series.map(p => byT.get(p.t) ?? null);
+  }
+  const sma50Full = indicators?.sma50 || null;
+  const sma200Full = indicators?.sma200 || null;
+  const sma50 = sma50Full ? alignByTime(chart.series || [], sma50Full) : null;
+  const sma200 = sma200Full ? alignByTime(chart.series || [], sma200Full) : null;
+
   const prices = series.map(s => s.c);
-  const min = Math.min(...prices);
-  const max = Math.max(...prices);
+  const indVals = [sma50, sma200].flat().filter(v => v != null);
+  const min = Math.min(...prices, ...(indVals.length ? indVals : [Infinity]));
+  const max = Math.max(...prices, ...(indVals.length ? indVals : [-Infinity]));
   const range2 = max - min || 1;
   const pad = { top: 12, right: 16, bottom: 24, left: 16 };
   const plotW = w - pad.left - pad.right;
@@ -269,6 +281,24 @@ function drawChart(chart, range) {
     ctx.lineJoin = 'round';
     ctx.stroke();
 
+    // SMA overlays (SMA50 = amber, SMA200 = violet), drawn over the same X axis.
+    function overlay(arr, color) {
+      if (!arr) return;
+      ctx.beginPath();
+      let started = false;
+      for (let i = 0; i < drawn; i++) {
+        const v = arr[i];
+        if (v == null) { started = false; continue; }
+        if (!started) { ctx.moveTo(x(i), y(v)); started = true; }
+        else ctx.lineTo(x(i), y(v));
+      }
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.25;
+      ctx.stroke();
+    }
+    overlay(sma50, 'rgba(250,204,21,0.85)');
+    overlay(sma200, 'rgba(167,139,250,0.85)');
+
     // price labels
     ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--muted').trim();
     ctx.font = '11px -apple-system, sans-serif';
@@ -311,10 +341,24 @@ function drawChart(chart, range) {
 
 function chartHtml(d) {
   const ranges = ['1M', '3M', '6M', '1Y', 'ALL'];
+  const lat = d?.indicators?.latest || {};
+  let indHtml = '';
+  if (lat.rsi14 != null || lat.sma50 != null || lat.sma200 != null) {
+    const rsiCls = lat.rsi14 != null ? (lat.rsi14 >= 70 ? 'warn' : lat.rsi14 <= 30 ? 'up' : '') : '';
+    const rsiLabel = lat.rsi14 != null
+      ? (lat.rsi14 >= 70 ? 'overbought' : lat.rsi14 <= 30 ? 'oversold' : 'neutral')
+      : '';
+    indHtml = `<div class="chart-indicators">` +
+      (lat.rsi14 != null ? `<span class="chip ${rsiCls}">RSI ${Math.round(lat.rsi14)} ${rsiLabel}</span>` : '') +
+      (lat.sma50 != null ? `<span class="chip">SMA50 ${fmtMoney(lat.sma50)}</span>` : '') +
+      (lat.sma200 != null ? `<span class="chip">SMA200 ${fmtMoney(lat.sma200)}</span>` : '') +
+      `</div>`;
+  }
   return `
     <div class="chart-wrap">
       <canvas id="detail-canvas"></canvas>
       <div class="chart-tooltip"></div>
+      ${indHtml}
       <div class="chart-range">
         ${ranges.map(r => `<button class="chart-range-btn${r === '1Y' ? ' active' : ''}" data-range="${r}">${r}</button>`).join('')}
       </div>
@@ -803,7 +847,7 @@ function newsContent(d) {
 // ---------- main renderers ----------
 function renderDetailFast(c, d, symbol) {
   c.innerHTML = heroHtml(d, '') + chartHtml(d);
-  drawChart(d.chart, '1Y');
+  drawChart(d.chart, '1Y', d.indicators);
 
   // init section accordion (story)
   const story = document.createElement('div');
@@ -817,7 +861,7 @@ function renderDetailFast(c, d, symbol) {
     btn.addEventListener('click', () => {
       c.querySelectorAll('.chart-range-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
-      drawChart(d.chart, btn.dataset.range);
+      drawChart(d.chart, btn.dataset.range, d.indicators);
     });
   });
 }
@@ -1243,6 +1287,18 @@ async function loadFgStrip() {
     if (d.vix) {
       const cls = d.vix.score > 60 ? 'down' : d.vix.score < 40 ? 'up' : '';
       html += `<span class="fg-item"><span class="fg-label">VIX</span><span class="${cls}">${d.vix.vix?.toFixed(1) || '—'}</span></span>`;
+    }
+    const macro = d.macro || {};
+    if (macro.tenYear != null) {
+      html += `<span class="fg-item"><span class="fg-label">10Y</span><span>${macro.tenYear.value?.toFixed(2) || '—'}%</span></span>`;
+    }
+    if (macro.sp500?.changePct != null) {
+      const cls = chgClass(macro.sp500.changePct);
+      html += `<span class="fg-item"><span class="fg-label">S&P</span><span class="${cls}">${fmtPct(macro.sp500.changePct)}</span></span>`;
+    }
+    if (macro.dollar?.changePct != null) {
+      const cls = chgClass(macro.dollar.changePct);
+      html += `<span class="fg-item"><span class="fg-label">DXY</span><span class="${cls}">${fmtPct(macro.dollar.changePct)}</span></span>`;
     }
     if (html) {
       el.innerHTML = html;

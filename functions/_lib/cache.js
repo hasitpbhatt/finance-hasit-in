@@ -30,11 +30,14 @@ async function store(url, text, contentType) {
 
 // Fetch with retry on 429/503. Max 2 retries. Honors the upstream Retry-After
 // header when present, otherwise exponential backoff (capped so we never sit on
-// a function worker for too long).
+// a function worker for too long). Accepts opts.signal (AbortSignal) so callers
+// can cancel the whole retry loop when their deadline expires.
 async function retryFetch(url, opts = {}, retries = 2) {
+  const { signal } = opts;
   for (let attempt = 0; attempt <= retries; attempt++) {
+    if (signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
     const res = await fetch(url, opts);
-    if (res.status === 429 || res.status === 503) {
+    if ((res.status === 429 || res.status === 503) && !signal?.aborted) {
       if (attempt < retries) {
         const retryAfter = Number(res.headers.get('Retry-After'));
         const delay = Number.isFinite(retryAfter) && retryAfter > 0
@@ -54,7 +57,7 @@ async function retryFetch(url, opts = {}, retries = 2) {
 // Falls back to a stale cached copy if the upstream errors (graceful degradation).
 // `cacheKey` lets callers cache under a stable URL (e.g. with a rotating crumb
 // stripped) so the edge cache isn't busted every session refresh.
-export async function cachedJson(url, ttlSeconds, extraHeaders = {}, cacheKey = null) {
+export async function cachedJson(url, ttlSeconds, extraHeaders = {}, cacheKey = null, signal = null) {
   const key = cacheKey || url;
   const hit = await fromCache(key);
   if (hit && hit.cachedAt && Date.now() - hit.cachedAt < ttlSeconds * 1000) {
@@ -64,6 +67,7 @@ export async function cachedJson(url, ttlSeconds, extraHeaders = {}, cacheKey = 
     const upstream = await retryFetch(url, {
       headers: { ...UA, ...extraHeaders },
       cf: { cacheTtl: ttlSeconds, cacheEverything: true },
+      signal,
     });
     if (!upstream.ok) throw new Error(`status ${upstream.status}`);
     const text = await upstream.text();
@@ -79,7 +83,7 @@ export async function cachedJson(url, ttlSeconds, extraHeaders = {}, cacheKey = 
 }
 
 // Same as cachedJson but for non-JSON (e.g. RSS XML).
-export async function cachedText(url, ttlSeconds, extraHeaders = {}, cacheKey = null) {
+export async function cachedText(url, ttlSeconds, extraHeaders = {}, cacheKey = null, signal = null) {
   const key = cacheKey || url;
   const hit = await fromCache(key);
   if (hit && hit.cachedAt && Date.now() - hit.cachedAt < ttlSeconds * 1000) {
@@ -89,6 +93,7 @@ export async function cachedText(url, ttlSeconds, extraHeaders = {}, cacheKey = 
     const upstream = await retryFetch(url, {
       headers: { ...UA, ...extraHeaders },
       cf: { cacheTtl: ttlSeconds, cacheEverything: true },
+      signal,
     });
     if (!upstream.ok) throw new Error(`status ${upstream.status}`);
     const text = await upstream.text();

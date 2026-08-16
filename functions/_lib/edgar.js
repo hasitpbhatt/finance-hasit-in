@@ -26,12 +26,17 @@ const CODE_LABEL = {
   G: 'Gift',
 };
 
+// Cap raw SEC documents before regex passes. Form 4 / 8-K documents can run
+// hundreds of KB; the regex parsing is the single biggest CPU consumer in this
+// library, so bound the work to the first N chars where all the signal lives.
+const DOC_CAP = 512 * 1024;
+
 // In-memory ticker map (refreshed at most once per worker instance lifetime).
 let tickerMap = null;
 
-async function getTickerMap() {
+async function getTickerMap(signal = null) {
   if (tickerMap) return tickerMap;
-  const { data } = await cachedJson(TICKERS_URL, TICKERS_TTL, EDGAR_UA);
+  const { data } = await cachedJson(TICKERS_URL, TICKERS_TTL, EDGAR_UA, null, signal);
   const map = new Map();
   for (const key of Object.keys(data || {})) {
     const entry = data[key];
@@ -47,9 +52,9 @@ async function getTickerMap() {
 }
 
 // Resolve a ticker symbol to its CIK (and 10-digit padded form).
-export async function getCik(symbol) {
+export async function getCik(symbol, signal = null) {
   try {
-    const map = await getTickerMap();
+    const map = await getTickerMap(signal);
     return map.get(String(symbol).toUpperCase()) || null;
   } catch {
     return null;
@@ -57,11 +62,11 @@ export async function getCik(symbol) {
 }
 
 // Recent Form 4 filings for a CIK (most recent first), capped at `max`.
-export async function getForm4Summaries(cikInfo, max = 8) {
+export async function getForm4Summaries(cikInfo, max = 8, signal = null) {
   if (!cikInfo) return [];
   const url = `https://data.sec.gov/submissions/CIK${cikInfo.padded}.json`;
   try {
-    const { data } = await cachedJson(url, FORM4_TTL, EDGAR_UA);
+    const { data } = await cachedJson(url, FORM4_TTL, EDGAR_UA, null, signal);
     const recent = data?.filings?.recent;
     if (!recent || !Array.isArray(recent.form)) return [];
     const out = [];
@@ -124,7 +129,7 @@ function pick(block, parent, child) {
 }
 
 // Fetch and parse a single Form 4 XML filing.
-export async function getForm4Transactions(cikInfo, accessionNumber) {
+export async function getForm4Transactions(cikInfo, accessionNumber, signal = null) {
   if (!cikInfo || !accessionNumber) return [];
   const acc = accessionNumber.replace(/-/g, '');
   const url = `https://www.sec.gov/Archives/edgar/data/${cikInfo.cik}/${acc}/form4.xml`;
@@ -132,19 +137,19 @@ export async function getForm4Transactions(cikInfo, accessionNumber) {
     const { data: xml } = await cachedText(url, FORM4_TTL, {
       ...EDGAR_UA,
       Accept: '*/*',
-    });
-    return parseForm4(xml);
+    }, null, signal);
+    return parseForm4((xml || '').slice(0, DOC_CAP));
   } catch {
     return [];
   }
 }
 
 // Generic: fetch recent filings for a CIK filtered by form type.
-export async function getRecentFilings(cikInfo, form, max = 40) {
+export async function getRecentFilings(cikInfo, form, max = 40, signal = null) {
   if (!cikInfo) return [];
   const url = `https://data.sec.gov/submissions/CIK${cikInfo.padded}.json`;
   try {
-    const { data } = await cachedJson(url, FORM4_TTL, EDGAR_UA);
+    const { data } = await cachedJson(url, FORM4_TTL, EDGAR_UA, null, signal);
     const recent = data?.filings?.recent;
     if (!recent || !Array.isArray(recent.form)) return [];
     const out = [];
@@ -167,13 +172,13 @@ export async function getRecentFilings(cikInfo, form, max = 40) {
 
 // Aggregate Form 4 insider trades for a symbol: returns the flat list of
 // transactions plus a small net summary. Fetches Form 4 XMLs concurrently.
-export async function getInsiderTrades(symbol, max = 8) {
-  const cikInfo = await getCik(symbol);
+export async function getInsiderTrades(symbol, max = 8, signal = null) {
+  const cikInfo = await getCik(symbol, signal);
   if (!cikInfo) return { available: false, trades: [] };
-  const summaries = await getForm4Summaries(cikInfo, max);
+  const summaries = await getForm4Summaries(cikInfo, max, signal);
   // Fetch all Form 4 XMLs concurrently (cap at 8).
   const results = await Promise.allSettled(
-    summaries.map(s => getForm4Transactions(cikInfo, s.accessionNumber))
+    summaries.map(s => getForm4Transactions(cikInfo, s.accessionNumber, signal))
   );
   const trades = [];
   for (let i = 0; i < results.length; i++) {
@@ -304,15 +309,15 @@ function resolveDocUrl(cikInfo, f) {
 }
 
 // Leadership changes from 8-K Item 5.02 (officer departures/appointments)
-export async function getLeadershipChanges(symbol, months = 12, env = {}) {
-  const cikInfo = await getCik(symbol);
+export async function getLeadershipChanges(symbol, months = 12, env = {}, signal = null) {
+  const cikInfo = await getCik(symbol, signal);
   if (!cikInfo) return { available: false };
 
   const cutoffMs = months * 30 * 24 * 3600 * 1000;
   const now = Date.now();
 
   // 1) Fetch recent 8-Ks (limit to 5 to stay within Cloudflare's 30s budget)
-  const filings = await getRecentFilings(cikInfo, '8-K', 5);
+  const filings = await getRecentFilings(cikInfo, '8-K', 5, signal);
 
   // 2) Filter by cutoff and resolve doc URLs (skip fallback to save time)
   const toFetch = [];
@@ -330,8 +335,8 @@ export async function getLeadershipChanges(symbol, months = 12, env = {}) {
     const batch = toFetch.slice(i, i + BATCH);
     const results = await Promise.all(batch.map(async ({ filing, docUrl }) => {
       try {
-        const { data } = await cachedText(docUrl, FORM4_TTL, { ...EDGAR_UA, Accept: '*/*' });
-        return { filing, xml: data || '' };
+        const { data } = await cachedText(docUrl, FORM4_TTL, { ...EDGAR_UA, Accept: '*/*' }, null, signal);
+        return { filing, xml: (data || '').slice(0, DOC_CAP) };
       } catch {
         return { filing, xml: '' };
       }

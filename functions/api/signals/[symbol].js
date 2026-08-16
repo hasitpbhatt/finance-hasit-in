@@ -6,17 +6,25 @@
 import { getInsiderTrades, getLeadershipChanges } from '../../_lib/edgar.js';
 import { getNewsIntel } from '../../_lib/newsintel.js';
 import { getHiring } from '../../_lib/hiring.js';
-import { getOptionChain, computeOptionSignals, getQuotes, getFundamentals } from '../../_lib/yahoo.js';
+import { getOptionChain, getOptionChainLimited, computeOptionSignals, getQuotes, getFundamentals } from '../../_lib/yahoo.js';
 import { getCboeOptionChain } from '../../_lib/cboe.js';
 import { getXbrlTrend } from '../../_lib/xbrl.js';
 import { getRetailSentiment } from '../../_lib/stocktwits.js';
 import { json, corsPreflight } from '../../_lib/http.js';
 import { retryFetch } from '../../_lib/cache.js';
 
-function withTimeout(promise, ms) {
+// Run a promise under a wall-clock cap AND abort it when the cap hits so the
+// underlying fetch/parse stops consuming CPU (the Worker Free plan budgets only
+// ~10ms of CPU per invocation, so a timed-out source must not keep churning).
+function withTimeout(promise, ms, signal) {
   return Promise.race([
     promise,
-    new Promise(resolve => setTimeout(() => resolve(null), ms)),
+    new Promise(resolve => {
+      setTimeout(() => {
+        signal?.abort();
+        resolve(null);
+      }, ms);
+    }),
   ]);
 }
 
@@ -284,7 +292,7 @@ ${parts.join('\n')}`;
           { role: 'user', content: prompt },
         ],
         temperature: 0.4,
-        max_tokens: 1100,
+        max_tokens: 900,
         response_format: { type: 'json_object' },
       }),
     });
@@ -321,12 +329,13 @@ ${parts.join('\n')}`;
   }
 }
 
-export async function onRequest(context) {
+async function handleSignals(context) {
   if (context.request.method === 'OPTIONS') return corsPreflight();
   const symbol = (context.params.symbol || '').toUpperCase();
   if (!symbol) return json({ error: 'symbol required' }, { status: 400 });
 
   const result = { symbol, degraded: false, errors: [] };
+  const controllers = [];
 
   // Lightweight quote for company name and price.
   let companyName = '';
@@ -338,44 +347,61 @@ export async function onRequest(context) {
     if (quote?.price != null) result.price = quote.price;
   } catch { /* not critical */ }
 
+  // Each source gets its own AbortController so a deadline miss actually stops
+  // the upstream fetch + parse instead of burning CPU in the background.
+  const src = () => {
+    const ac = new AbortController();
+    controllers.push(ac);
+    return ac.signal;
+  };
+
   // All signal sources run concurrently with per-source timeouts.
-  // Total budget: ~18s (leaves 12s headroom for Cloudflare's 30s limit + cold starts).
+  // Total budget: ~6s (well under Cloudflare's CPU/duration limits; each source
+  // aborts on timeout so nothing keeps running past its cap).
   const TIMEOUTS = {
-    insider: 5000,
-    newsIntel: 4000,
-    leadership: 6000,
-    hiring: 3000,
-    options: 5000,
-    analyst: 6000,
-    retail: 3000,
-    xbrl: 6000,
+    insider: 4000,
+    newsIntel: 3000,
+    leadership: 4000,
+    hiring: 2000,
+    options: 4000,
+    analyst: 4500,
+    retail: 2000,
+    xbrl: 4500,
   };
 
   const [insiderR, newsIntelR, leadershipR, hiringR, optionsR, analystR, retailR, xbrlR] = await Promise.allSettled([
-    withTimeout(getInsiderTrades(symbol, 5), TIMEOUTS.insider),
-    withTimeout(getNewsIntel(symbol, companyName), TIMEOUTS.newsIntel),
-    withTimeout(getLeadershipChanges(symbol, 12, context.env), TIMEOUTS.leadership),
-    withTimeout(getHiring(symbol), TIMEOUTS.hiring),
+    withTimeout(getInsiderTrades(symbol, 5, src()), TIMEOUTS.insider, controllers[controllers.length - 1]),
+    withTimeout(getNewsIntel(symbol, companyName, src()), TIMEOUTS.newsIntel, controllers[controllers.length - 1]),
+    withTimeout(getLeadershipChanges(symbol, 12, context.env, src()), TIMEOUTS.leadership, controllers[controllers.length - 1]),
+    withTimeout(getHiring(symbol, src()), TIMEOUTS.hiring, controllers[controllers.length - 1]),
     withTimeout((async () => {
+      // Light path: only the expiries the signals consume (nearest + ~30 DTE)
+      // — avoids Yahoo getAllData's 1-3MB parse, a top CPU-time risk.
       try {
-        const cboe = await getCboeOptionChain(symbol);
+        const chain = await getOptionChainLimited(symbol, src());
+        if (chain?.chain?.length) {
+          return { signals: computeOptionSignals(chain, quote?.price), expirations: chain.expirations };
+        }
+      } catch { /* limited path failed */ }
+      try {
+        const cboe = await getCboeOptionChain(symbol, src());
         if (cboe) {
           const chain = { expirations: cboe.expirations, chain: cboe.chain };
           return { signals: computeOptionSignals(chain, cboe.currentPrice || quote?.price), expirations: cboe.expirations };
         }
       } catch { /* CBOE failed */ }
       try {
-        const chain = await getOptionChain(symbol);
+        const chain = await getOptionChain(symbol, src());
         return { signals: computeOptionSignals(chain, quote?.price), expirations: chain?.expirations || [] };
       } catch { /* Yahoo also failed */ }
       return null;
-    })(), TIMEOUTS.options),
+    })(), TIMEOUTS.options, controllers[controllers.length - 1]),
     // Analyst/earnings/dividends/short-interest via getFundamentals (single quoteSummary call)
-    withTimeout(getFundamentals(symbol).catch(() => null), TIMEOUTS.analyst),
+    withTimeout(getFundamentals(symbol, src()).catch(() => null), TIMEOUTS.analyst, controllers[controllers.length - 1]),
     // Retail sentiment
-    withTimeout(getRetailSentiment(symbol), TIMEOUTS.retail),
+    withTimeout(getRetailSentiment(symbol, src()), TIMEOUTS.retail, controllers[controllers.length - 1]),
     // XBRL fundamentals trend
-    withTimeout(getXbrlTrend(symbol), TIMEOUTS.xbrl),
+    withTimeout(getXbrlTrend(symbol, src()), TIMEOUTS.xbrl, controllers[controllers.length - 1]),
   ]);
 
   // --- Insider ---
@@ -529,7 +555,7 @@ export async function onRequest(context) {
 
   // --- Mistral narrative (runs after all signals, uses aggregated data) ---
   try {
-    const narrative = await withTimeout(mistralNarrative(symbol, companyName, result, context.env), 6000);
+    const narrative = await withTimeout(mistralNarrative(symbol, companyName, result, context.env), 3500);
     result.narrative = narrative || { available: false, reason: 'unavailable' };
   } catch {
     result.narrative = { available: false, reason: 'error' };
@@ -541,4 +567,25 @@ export async function onRequest(context) {
       'CDN-Cache-Control': 'public, s-maxage=300',
     },
   });
+}
+
+// Top-level guard: never let an unhandled throw surface as a 500. If anything
+// unexpectedly blows up we still return 200 with a degraded partial payload so
+// the client never shows a blank "no signals" state.
+export async function onRequest(context) {
+  try {
+    return await handleSignals(context);
+  } catch (err) {
+    return json({
+      symbol: (context.params.symbol || '').toUpperCase(),
+      degraded: true,
+      error: 'signals: ' + (err?.message || 'internal error'),
+      score: null,
+      marketPulse: null,
+      narrative: { available: false, reason: 'error' },
+    }, {
+      status: 200,
+      headers: { 'Cache-Control': 'public, s-maxage=60, max-age=30' },
+    });
+  }
 }

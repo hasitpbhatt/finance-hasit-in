@@ -4,29 +4,29 @@ import { cachedJson } from './cache.js';
 import { HIRING_SOURCES } from './hiring-sources.js';
 
 // Fetch open jobs from Greenhouse public API
-async function getGreenhouseJobs(slug) {
+async function getGreenhouseJobs(slug, signal = null) {
   const url = `https://boards-api.greenhouse.io/v1/boards/${slug}/jobs`;
   const { data } = await cachedJson(url, 21600, {
     'User-Agent': 'InvestmentFinder/1.0 (contact@example.com)',
-  });
+  }, null, signal);
   return data?.jobs || [];
 }
 
 // Fetch department-level job counts from Greenhouse
-async function getGreenhouseDepartments(slug) {
+async function getGreenhouseDepartments(slug, signal = null) {
   const url = `https://boards-api.greenhouse.io/v1/boards/${slug}/departments`;
   const { data } = await cachedJson(url, 21600, {
     'User-Agent': 'InvestmentFinder/1.0 (contact@example.com)',
-  });
+  }, null, signal);
   return (data?.departments || []).filter(d => d.jobs.length > 0);
 }
 
 // Fetch open jobs from Lever public API
-async function getLeverJobs(slug) {
+async function getLeverJobs(slug, signal = null) {
   const url = `https://api.lever.co/v0/postings/${slug}?mode=json`;
   const { data } = await cachedJson(url, 21600, {
     'User-Agent': 'InvestmentFinder/1.0 (contact@example.com)',
-  });
+  }, null, signal);
   return data?.jobs || [];
 }
 
@@ -43,7 +43,7 @@ function normalizeJob(j) {
 }
 
 // Main export: returns { available: true, ... } or { available: false, reason }
-export async function getHiring(ticker) {
+export async function getHiring(ticker, signal = null) {
   const src = HIRING_SOURCES[ticker];
   if (!src) {
     return { available: false, reason: 'no_ats' };
@@ -54,11 +54,11 @@ export async function getHiring(ticker) {
   try {
     if (src.greenhouse) {
       [jobs, departments] = await Promise.all([
-        getGreenhouseJobs(src.greenhouse),
-        getGreenhouseDepartments(src.greenhouse),
+        getGreenhouseJobs(src.greenhouse, signal),
+        getGreenhouseDepartments(src.greenhouse, signal),
       ]);
     } else if (src.lever) {
-      jobs = await getLeverJobs(src.lever);
+      jobs = await getLeverJobs(src.lever, signal);
     } else {
       return { available: false, reason: 'no_ats' };
     }

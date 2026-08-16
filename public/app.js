@@ -34,6 +34,24 @@ async function getJSON(url) {
   return res.json();
 }
 
+// Same as getJSON but with a wall-clock abort so a dead/slow upstream doesn't
+// hang the page indefinitely. Resolves undefined on timeout so callers can show
+// a graceful "sources are slow" state instead of an error.
+async function getJSONWithTimeout(url, ms = 18000) {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), ms);
+  try {
+    const res = await fetch(url, { signal: ac.signal });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return await res.json();
+  } catch (err) {
+    if (err?.name === 'AbortError') return undefined;
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ---------- icons ----------
 const ICONS = {
   chevron: '<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6 3.5 10 8 6 12.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
@@ -1356,8 +1374,15 @@ async function openDetail(symbol, pushState) {
 
   let detailData = null;
   let signalsData = null;
+
+  // Fire detail + signals concurrently: chart paints as soon as detail lands,
+  // signals fill the accordion when ready. Saves the serial detail wait.
+  const detailP = getJSONWithTimeout('/api/detail/' + encodeURIComponent(symbol), 15000);
+  const signalsP = getJSONWithTimeout('/api/signals/' + encodeURIComponent(symbol), 20000);
+
   try {
-    detailData = await getJSON('/api/detail/' + encodeURIComponent(symbol));
+    detailData = await detailP;
+    if (!detailData) throw new Error('timeout');
     renderDetailFast(c, detailData, symbol);
   } catch (e) {
     c.innerHTML = `<div style="padding:48px 0;"><p class="muted">Failed to load ${symbol}: ${e.message}</p></div>`;
@@ -1365,11 +1390,12 @@ async function openDetail(symbol, pushState) {
   }
 
   try {
-    signalsData = await getJSON('/api/signals/' + encodeURIComponent(symbol));
+    signalsData = await signalsP;
+    if (!signalsData) throw new Error('sources slow');
     renderSignals(c, detailData, signalsData);
   } catch (e) {
     const story = $('#story-sections');
-    if (story) story.innerHTML = '<p class="muted" style="padding:16px;font-size:13px;">Signals unavailable.</p>';
+    if (story) story.innerHTML = '<p class="muted" style="padding:16px;font-size:13px;">Signals are taking longer than usual — try again in a minute.</p>';
   }
 
   document.title = `${symbol} — Investment Finder`;

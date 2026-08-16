@@ -70,7 +70,7 @@ async function getSession(force = false) {
 }
 
 // Returns a flat array of normalized quote objects. Missing fields -> null.
-export async function getQuotes(symbols) {
+export async function getQuotes(symbols, signal = null) {
   const results = [];
   for (const group of chunk(symbols, 50)) {
     const built = (session) =>
@@ -89,11 +89,11 @@ export async function getQuotes(symbols) {
     let session = await getSession();
     let data;
     try {
-      ({ data } = await cachedJson(built(session), 3600, headersFor(session), cacheKey(session)));
+      ({ data } = await cachedJson(built(session), 3600, headersFor(session), cacheKey(session), signal));
     } catch (e) {
       // Session likely expired -> refresh once and retry.
       session = await getSession(true);
-      ({ data } = await cachedJson(built(session), 3600, headersFor(session), cacheKey(session)));
+      ({ data } = await cachedJson(built(session), 3600, headersFor(session), cacheKey(session), signal));
     }
 
     const list = data?.quoteResponse?.result || [];
@@ -301,7 +301,7 @@ function normalizeFundamental(result) {
 // Fetch the full value-investor fundamentals for a single symbol via
 // v10/quoteSummary. Returns null on failure. Cached at the edge for 1h under a
 // crumb-independent key.
-export async function getFundamentals(symbol) {
+export async function getFundamentals(symbol, signal = null) {
   const session = await getSession();
   const built =
     `${YH}/v10/finance/quoteSummary/${encodeURIComponent(symbol)}` +
@@ -313,7 +313,7 @@ export async function getFundamentals(symbol) {
     Accept: '*/*',
     Cookie: session.cookie,
   };
-  const { data } = await cachedJson(built, 3600, headers, cacheKey);
+  const { data } = await cachedJson(built, 3600, headers, cacheKey, signal);
   const result = data?.quoteSummary?.result?.[0];
   if (!result) return null;
   return normalizeFundamental(result);
@@ -342,12 +342,12 @@ export async function getFundamentalsBatch(symbols, concurrency = 20) {
 }
 
 // Historical close series for a symbol. Returns { series: [{t, c}] }.
-export async function getChart(symbol, range = '6mo', interval = '1d') {
+export async function getChart(symbol, range = '6mo', interval = '1d', signal = null) {
   const url =
     `${YH}/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=${interval}`;
   // Daily close series changes at most a few times per session; 6h TTL keeps
   // the chart fresh without hammering Yahoo (the heaviest endpoint by payload).
-  const { data } = await cachedJson(url, 21600);
+  const { data } = await cachedJson(url, 21600, {}, null, signal);
   const result = data?.chart?.result?.[0];
   if (!result) return { series: [] };
   const timestamps = result.timestamp || [];
@@ -360,12 +360,12 @@ export async function getChart(symbol, range = '6mo', interval = '1d') {
 }
 
 // Latest headlines for a symbol via Yahoo's RSS headline feed (free, no key).
-export async function getNews(symbol, limit = 8) {
+export async function getNews(symbol, limit = 8, signal = null) {
   const url =
     `https://feeds.finance.yahoo.com/rss/2.0/headline?s=${encodeURIComponent(symbol)}` +
     `&region=US&lang=en-US`;
   try {
-    const { data: xml } = await cachedText(url, 900);
+    const { data: xml } = await cachedText(url, 900, {}, null, signal);
     const items = xml.match(/<item>([\s\S]*?)<\/item>/g) || [];
     const news = [];
     for (const block of items) {
@@ -397,7 +397,7 @@ export async function getNews(symbol, limit = 8) {
 
 // Fetch the full options chain for a symbol via Yahoo's v7/options endpoint.
 // Returns { expirations, chain: [{ expiry, calls, puts }] } or null on failure.
-export async function getOptionChain(symbol) {
+export async function getOptionChain(symbol, signal = null) {
   const session = await getSession();
   const built =
     `${YH}/v7/finance/options/${encodeURIComponent(symbol)}` +
@@ -406,7 +406,7 @@ export async function getOptionChain(symbol) {
     `${YH}/v7/finance/options/${encodeURIComponent(symbol)}?getAllData=true`;
   const headers = { 'User-Agent': UA['User-Agent'], Accept: '*/*', Cookie: session.cookie };
   try {
-    const { data } = await cachedJson(built, 1800, headers, cacheKey);
+    const { data } = await cachedJson(built, 1800, headers, cacheKey, signal);
     const result = data?.optionChain?.result?.[0];
     if (!result) return null;
     const expirations = result.expirationDates || [];
@@ -438,6 +438,65 @@ export async function getOptionChain(symbol) {
         _type: 'put',
       })),
     }));
+    return { expirations, chain };
+  } catch {
+    return null;
+  }
+}
+
+// Lighter options fetch for the signals path: only the two expiries that the
+// signals actually consume (nearest, and the one closest to ~30 DTE). Avoids
+// getAllData's 1-3MB payload, which is the heaviest JSON.parse in the app and
+// a major CPU-time risk on the Workers Free plan's 10ms budget.
+// Returns the same { expirations, chain } shape as getOptionChain.
+export async function getOptionChainLimited(symbol, signal = null) {
+  const session = await getSession();
+  const headers = { 'User-Agent': UA['User-Agent'], Accept: '*/*', Cookie: session.cookie };
+  const baseCacheKey =
+    `${YH}/v7/finance/options/${encodeURIComponent(symbol)}`;
+  try {
+    // 1) Get expiration list (tiny response).
+    const built1 = `${baseCacheKey}?crumb=${encodeURIComponent(session.crumb)}`;
+    const { data } = await cachedJson(built1, 1800, headers, baseCacheKey, signal);
+    const result = data?.optionChain?.result?.[0];
+    if (!result) return null;
+    const expirations = result.expirationDates || [];
+    if (!expirations.length) return null;
+
+    // 2) Pick nearest + closest-to-30-DTE.
+    const now = Date.now();
+    const dteOf = e => Math.max(1, Math.round((e * 1000 - now) / 86400000));
+    const nearest = expirations.reduce((a, b) => (dteOf(b) < dteOf(a) ? b : a));
+    const move = expirations.reduce((a, b) =>
+      (Math.abs(dteOf(b) - 30) < Math.abs(dteOf(a) - 30) ? b : a));
+
+    // 3) Fetch just those two (two small calls instead of one giant one).
+    const want = new Set([nearest, move]);
+    const chain = [];
+    for (const expiry of expirations) {
+      if (!want.has(expiry)) continue;
+      const built = `${baseCacheKey}?expiration=${expiry}&crumb=${encodeURIComponent(session.crumb)}`;
+      const key = `${baseCacheKey}?expiration=${expiry}`;
+      const { data: d2 } = await cachedJson(built, 1800, headers, key, signal);
+      const res = d2?.optionChain?.result?.[0];
+      if (!res) continue;
+      const o = (res.options || [])[0];
+      chain.push({
+        expiry: o?.expirationDate ?? expiry,
+        calls: (o?.calls || []).map(c => ({
+          symbol: c.contractSymbol, strike: c.strike, bid: c.bid, ask: c.ask,
+          last: c.lastPrice, vol: c.volume, oi: c.openInterest,
+          iv: c.impliedVolatility, itm: c.inTheMoney, _type: 'call',
+        })),
+        puts: (o?.puts || []).map(p => ({
+          symbol: p.contractSymbol, strike: p.strike, bid: p.bid, ask: p.ask,
+          last: p.lastPrice, vol: p.volume, oi: p.openInterest,
+          iv: p.impliedVolatility, itm: p.inTheMoney, _type: 'put',
+        })),
+      });
+      if (chain.length === want.size) break;
+    }
+    if (!chain.length) return null;
     return { expirations, chain };
   } catch {
     return null;
@@ -620,7 +679,7 @@ export async function searchSymbols(query, max = 10) {
     `${YH}/v1/finance/search?q=${encodeURIComponent(q)}` +
     `&quotesCount=${max}&newsCount=0&listsCount=0`;
   const headers = { 'User-Agent': UA['User-Agent'], Accept: '*/*', Cookie: session.cookie };
-  const { data } = await cachedJson(built, 900, headers, cacheKey);
+  const { data } = await cachedJson(built, 900, headers, cacheKey, signal);
   const US = new Set(['NMS', 'NYQ', 'NAS', 'NGM', 'NCM', 'ASE', 'PCX', 'PNK', 'BTS']);
   const out = [];
   for (const r of data?.quotes || []) {

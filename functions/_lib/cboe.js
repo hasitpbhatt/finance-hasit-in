@@ -7,10 +7,10 @@ const BASE = 'https://cdn.cboe.com/api/global/delayed_quotes/options';
 
 // Fetch options chain from CBOE. Returns the same shape as Yahoo's getOptionChain
 // or null on failure. Falls back gracefully.
-export async function getCboeOptionChain(symbol) {
+export async function getCboeOptionChain(symbol, signal = null) {
   const url = `${BASE}/${encodeURIComponent(symbol.toUpperCase())}.json`;
   try {
-    const { data } = await cachedJson(url, 1800);
+    const { data } = await cachedJson(url, 1800, {}, null, signal);
     const optionsData = data?.[symbol.toUpperCase()];
     if (!optionsData?.options) return null;
     const currentPrice = optionsData.current_price || null;

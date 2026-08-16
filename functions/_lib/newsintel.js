@@ -119,11 +119,11 @@ function sourceWeight(domain) {
 
 // ---------- Main export ----------
 // Returns { available: true, count, avgSentiment, trend, spike, topics, articles } or { available: false, reason }
-export async function getNewsIntel(symbol, companyName) {
+export async function getNewsIntel(symbol, companyName, signal = null) {
   // 1) Google News RSS (30d)
   let googleXml = '';
   try {
-    const { data } = await cachedText(GOOGLE_NEWS_URL(symbol, companyName), 10800);
+    const { data } = await cachedText(GOOGLE_NEWS_URL(symbol, companyName), 10800, {}, null, signal);
     googleXml = data || '';
   } catch {
     // continue with Yahoo only
@@ -132,7 +132,7 @@ export async function getNewsIntel(symbol, companyName) {
   // 2) Yahoo RSS (freshness) — use existing getNews helper
   let yahooNews = [];
   try {
-    yahooNews = await getNews(symbol, 30);
+    yahooNews = await getNews(symbol, 30, signal);
   } catch {
     // ignore
   }

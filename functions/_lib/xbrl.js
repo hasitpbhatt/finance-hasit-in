@@ -29,6 +29,32 @@ const TAG_CANDIDATES = {
   ],
 };
 
+// Compact-cache key: stores the parsed { fy, value } series (tiny) instead of
+// the raw companyconcept JSON (up to ~1MB). This is the big CPU saver: the
+// heavyweight JSON.parse happens once per 24h; every subsequent request reads
+// a ~100-byte payload that needs no parse cost beyond a trivial JSON.parse.
+function compactKey(cikPadded, concept) {
+  return `https://xbrl-compact/${cikPadded}/${concept}`;
+}
+
+async function fromCompact(cikPadded, concept) {
+  if (typeof caches === 'undefined') return null;
+  const cached = await caches.default.match(new Request(compactKey(cikPadded, concept)));
+  if (!cached) return null;
+  const at = Number(cached.headers.get('X-Cached-At') || '0');
+  if (Date.now() - at >= XBRL_TTL * 1000) return null;
+  return cached.json();
+}
+
+async function toCompact(cikPadded, concept, series) {
+  if (typeof caches === 'undefined') return;
+  const response = new Response(JSON.stringify(series), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json', 'X-Cached-At': String(Date.now()) },
+  });
+  await caches.default.put(new Request(compactKey(cikPadded, concept)), response);
+}
+
 // Extract annual (10-K) FY values, deduped by fiscal year, most recent 5.
 function annualFacts(raw) {
   const fy = raw
@@ -84,9 +110,15 @@ function verdictLabel(v) {
   return labels[v] || 'Unknown';
 }
 
-// Fetch a single XBRL concept for a ticker. Tries the first 2 tags in parallel
-// and picks the one with the most recent data (companies switch XBRL tags over time).
-async function fetchConcept(cik, concept) {
+// Fetch a single XBRL concept for a ticker and return the annual series
+// [{ fy, value }] (most recent 5 years, deduped by fiscal year). Uses the
+// compact cache so the raw companyconcept payload (up to ~1MB) is fetched and
+// parsed at most once per 24h. Tries the first 2 tags in parallel and picks
+// the one with the most recent data (companies switch XBRL tags over time).
+async function fetchConcept(cik, concept, signal = null) {
+  const compact = await fromCompact(cik.padded, concept);
+  if (compact) return compact;
+
   const tags = TAG_CANDIDATES[concept];
   if (!tags || !tags.length) return [];
 
@@ -94,7 +126,7 @@ async function fetchConcept(cik, concept) {
   const results = await Promise.allSettled(
     tryTags.map(tag => cachedJson(
       `https://data.sec.gov/api/xbrl/companyconcept/CIK${cik.padded}/us-gaap/${tag}.json`,
-      XBRL_TTL, EDGAR_UA,
+      XBRL_TTL, EDGAR_UA, null, signal,
     ))
   );
 
@@ -112,25 +144,28 @@ async function fetchConcept(cik, concept) {
       }
     }
   }
-  return best;
+
+  const series = annualFacts(best);
+  if (series.length) await toCompact(cik.padded, concept, series);
+  return series;
 }
 
 // Fetch revenue and net income trends via individual companyconcept calls.
-// Only 2-3 calls instead of companyfacts (which can be 4MB+).
-export async function getXbrlTrend(symbol) {
-  const cik = await getCik(symbol);
+// Heavy parsing is compact-cached so each concept is parsed at most once/24h.
+export async function getXbrlTrend(symbol, signal = null) {
+  const cik = await getCik(symbol, signal);
   if (!cik) return null;
 
   // Fetch only revenue and net income (skip FCF/CapEx/EPS to save time)
   const [revenueRaw, netIncomeRaw] = await Promise.all([
-    fetchConcept(cik, 'revenue'),
-    fetchConcept(cik, 'netIncome'),
+    fetchConcept(cik, 'revenue', signal),
+    fetchConcept(cik, 'netIncome', signal),
   ]);
 
   if (!revenueRaw.length && !netIncomeRaw.length) return null;
 
-  const revenue = annualFacts(revenueRaw);
-  const netIncome = annualFacts(netIncomeRaw);
+  const revenue = revenueRaw;
+  const netIncome = netIncomeRaw;
   const revenueGrowth = yoyGrowth(revenue);
   const netIncomeGrowth = yoyGrowth(netIncome);
 

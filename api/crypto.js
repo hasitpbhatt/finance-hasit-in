@@ -1,9 +1,9 @@
-import { getCrypto } from '../../lib/crypto.js';
-import { json, corsPreflight } from '../../lib/http.js';
+import { getCrypto } from '../lib/crypto.js';
+import { json, corsPreflight } from '../lib/http.js';
 
-export async function onRequest(context) {
-  if (context.request.method === 'OPTIONS') return corsPreflight();
-  const url = new URL(context.request.url);
+export default async function handler(request) {
+  if (request.method === 'OPTIONS') return corsPreflight();
+  const url = new URL(request.url);
   const perPage = Math.min(Math.max(parseInt(url.searchParams.get('limit')) || 50, 1), 100);
 
   try {

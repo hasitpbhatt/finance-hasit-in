@@ -7,3 +7,7 @@ dist/
 .devserver.log
 .devserver.err.log
 .devserver.out.log
+
+# Vercel
+.vercel/
+.env.local

@@ -41,7 +41,7 @@ This repo deploys to Cloudflare Pages via the **`prod`** branch. Pushing to `pro
 
 ---
 
-## Project — Investment Finder (Cloudflare Pages)
+## Project — Investment Finder (Cloudflare Pages + Vercel)
 
 ### Architecture
 
@@ -74,7 +74,7 @@ wrangler dev   # serves at http://localhost:8788 (hot-reloads)
 
 ```bash
 node --check public/app.js
-# then smoke-test in a real browser at http://localhost:8788
+# then smoke-test in a real browser at http://localhost:8788 (Cloudflare) or http://localhost:3000 (Vercel)
 # (Playwright probe scripts live outside the repo under %TEMP%\opencode)
 ```
 

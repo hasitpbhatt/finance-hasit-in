@@ -1,20 +1,18 @@
-import { getQuotes, getFundamentalsBatch, searchSymbols } from '../../lib/yahoo.js';
-import { UNIVERSE } from '../../lib/universe.js';
-import { json, corsPreflight } from '../../lib/http.js';
+import { getQuotes, getFundamentalsBatch, searchSymbols } from '../lib/yahoo.js';
+import { UNIVERSE } from '../lib/universe.js';
+import { json, corsPreflight } from '../lib/http.js';
 
 function num(v) {
   const n = parseFloat(v);
   return Number.isNaN(n) ? null : n;
 }
 
-// Server-side presets (mirror of client PRESETS)
 const PRESETS = {
   compounder: { peMax: 25, roeMin: 0.15, earningsGrowthMin: 0.1, limit: 20 },
   cash: { dividendYieldMin: 2, deMax: 1, peMax: 20, limit: 20 },
   turnaround: { peMax: 15, earningsGrowthMin: 0.05, limit: 20 },
 };
 
-// Server-side NL keyword mapper (mirror of client parseNaturalLanguage)
 function parseNlToParams(nl) {
   const out = {};
   const lower = nl.toLowerCase();
@@ -39,12 +37,11 @@ function parseNlToParams(nl) {
   return out;
 }
 
-export async function onRequest(context) {
-  if (context.request.method === 'OPTIONS') return corsPreflight();
-  const url = new URL(context.request.url);
+export default async function handler(request) {
+  if (request.method === 'OPTIONS') return corsPreflight();
+  const url = new URL(request.url);
   const p = url.searchParams;
 
-  // Resolve preset or NL query into concrete filter params
   let resolved = {};
   const presetName = (p.get('preset') || '').trim().toLowerCase();
   const nlQuery = (p.get('nl') || '').trim();
@@ -55,7 +52,6 @@ export async function onRequest(context) {
     resolved = parseNlToParams(nlQuery);
   }
 
-  // Explicit params override preset/NL defaults
   const q = (p.get('q') || '').trim().toLowerCase();
   const typeFilter = (p.get('type') || resolved.type || 'all').toUpperCase();
   const marketCapMin = num(p.get('marketCapMin')) ?? resolved.marketCapMin ?? null;

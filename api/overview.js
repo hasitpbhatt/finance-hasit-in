@@ -1,7 +1,7 @@
-import { getQuotes } from '../../lib/yahoo.js';
-import { getCrypto } from '../../lib/crypto.js';
-import { UNIVERSE } from '../../lib/universe.js';
-import { json, corsPreflight } from '../../lib/http.js';
+import { getQuotes } from '../lib/yahoo.js';
+import { getCrypto } from '../lib/crypto.js';
+import { UNIVERSE } from '../lib/universe.js';
+import { json, corsPreflight } from '../lib/http.js';
 
 function topMovers(list, dir, n = 5) {
   const withChange = list.filter((x) => x.changePercent != null);
@@ -11,8 +11,8 @@ function topMovers(list, dir, n = 5) {
   return withChange.slice(0, n);
 }
 
-export async function onRequest(context) {
-  if (context.request.method === 'OPTIONS') return corsPreflight();
+export default async function handler(request) {
+  if (request.method === 'OPTIONS') return corsPreflight();
 
   const result = {
     updatedAt: Date.now(),

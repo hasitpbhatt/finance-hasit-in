@@ -1,10 +1,10 @@
-import { searchSymbols } from '../../lib/yahoo.js';
-import { UNIVERSE } from '../../lib/universe.js';
-import { json, corsPreflight } from '../../lib/http.js';
+import { searchSymbols } from '../lib/yahoo.js';
+import { UNIVERSE } from '../lib/universe.js';
+import { json, corsPreflight } from '../lib/http.js';
 
-export async function onRequest(context) {
-  if (context.request.method === 'OPTIONS') return corsPreflight();
-  const url = new URL(context.request.url);
+export default async function handler(request) {
+  if (request.method === 'OPTIONS') return corsPreflight();
+  const url = new URL(request.url);
   const q = (url.searchParams.get('q') || '').trim();
 
   if (!q) {

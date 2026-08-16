@@ -3,15 +3,15 @@
 // and a Mistral plain-English narrative. All sources run concurrently via
 // Promise.allSettled so the slowest one determines total latency.
 
-import { getInsiderTrades, getLeadershipChanges } from '../../../lib/edgar.js';
-import { getNewsIntel } from '../../../lib/newsintel.js';
-import { getHiring } from '../../../lib/hiring.js';
-import { getOptionChain, getOptionChainLimited, computeOptionSignals, getQuotes, getFundamentals } from '../../../lib/yahoo.js';
-import { getCboeOptionChain } from '../../../lib/cboe.js';
-import { getXbrlTrend } from '../../../lib/xbrl.js';
-import { getRetailSentiment } from '../../../lib/stocktwits.js';
-import { json, corsPreflight } from '../../../lib/http.js';
-import { retryFetch } from '../../../lib/cache.js';
+import { getInsiderTrades, getLeadershipChanges } from '../../lib/edgar.js';
+import { getNewsIntel } from '../../lib/newsintel.js';
+import { getHiring } from '../../lib/hiring.js';
+import { getOptionChain, getOptionChainLimited, computeOptionSignals, getQuotes, getFundamentals } from '../../lib/yahoo.js';
+import { getCboeOptionChain } from '../../lib/cboe.js';
+import { getXbrlTrend } from '../../lib/xbrl.js';
+import { getRetailSentiment } from '../../lib/stocktwits.js';
+import { json, corsPreflight } from '../../lib/http.js';
+import { retryFetch } from '../../lib/cache.js';
 
 // Run a promise under a wall-clock cap AND abort it when the cap hits so the
 // underlying fetch/parse stops consuming CPU (the Worker Free plan budgets only
@@ -329,9 +329,9 @@ ${parts.join('\n')}`;
   }
 }
 
-async function handleSignals(context) {
-  if (context.request.method === 'OPTIONS') return corsPreflight();
-  const symbol = (context.params.symbol || '').toUpperCase();
+async function handleSignals(request, params) {
+  if (request.method === 'OPTIONS') return corsPreflight();
+  const symbol = (params.symbol || '').toUpperCase();
   if (!symbol) return json({ error: 'symbol required' }, { status: 400 });
 
   const result = { symbol, degraded: false, errors: [] };
@@ -372,7 +372,7 @@ async function handleSignals(context) {
   const [insiderR, newsIntelR, leadershipR, hiringR, optionsR, analystR, retailR, xbrlR] = await Promise.allSettled([
     withTimeout(getInsiderTrades(symbol, 5, src()), TIMEOUTS.insider, controllers[controllers.length - 1]),
     withTimeout(getNewsIntel(symbol, companyName, src()), TIMEOUTS.newsIntel, controllers[controllers.length - 1]),
-    withTimeout(getLeadershipChanges(symbol, 12, context.env, src()), TIMEOUTS.leadership, controllers[controllers.length - 1]),
+    withTimeout(getLeadershipChanges(symbol, 12, process.env, src()), TIMEOUTS.leadership, controllers[controllers.length - 1]),
     withTimeout(getHiring(symbol, src()), TIMEOUTS.hiring, controllers[controllers.length - 1]),
     withTimeout((async () => {
       // Light path: only the expiries the signals consume (nearest + ~30 DTE)
@@ -555,7 +555,7 @@ async function handleSignals(context) {
 
   // --- Mistral narrative (runs after all signals, uses aggregated data) ---
   try {
-    const narrative = await withTimeout(mistralNarrative(symbol, companyName, result, context.env), 5000);
+    const narrative = await withTimeout(mistralNarrative(symbol, companyName, result, process.env), 5000);
     result.narrative = narrative || { available: false, reason: 'unavailable' };
   } catch {
     result.narrative = { available: false, reason: 'error' };
@@ -572,12 +572,12 @@ async function handleSignals(context) {
 // Top-level guard: never let an unhandled throw surface as a 500. If anything
 // unexpectedly blows up we still return 200 with a degraded partial payload so
 // the client never shows a blank "no signals" state.
-export async function onRequest(context) {
+export default async function handler(request, { params }) {
   try {
-    return await handleSignals(context);
+    return await handleSignals(request, params);
   } catch (err) {
     return json({
-      symbol: (context.params.symbol || '').toUpperCase(),
+      symbol: (params.symbol || '').toUpperCase(),
       degraded: true,
       error: 'signals: ' + (err?.message || 'internal error'),
       score: null,
@@ -589,3 +589,4 @@ export async function onRequest(context) {
     });
   }
 }
+

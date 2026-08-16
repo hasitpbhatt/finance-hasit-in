@@ -1,7 +1,7 @@
 # Investment Finder
 
 A free, no-account, no-API-key web tool that surfaces investable US **stocks and ETFs**
-plus crypto market data. Built for **Cloudflare Pages**: a plain static frontend
+plus crypto market data. Built for **Cloudflare Pages** and **Vercel**: a plain static frontend
 (`./public`) backed by **Cloudflare Pages Functions** (`./functions`) that proxy and
 edge-cache free public data sources.
 
@@ -58,7 +58,7 @@ wrangler.toml
 ## Notes & limitations
 - Free upstreams can be rate-limited or change without notice. The app degrades
   gracefully: a failed source returns `degraded: true` with a message instead of an error page.
-- The screener universe is a curated list in `functions/_lib/universe.js` — edit it to
+- The screener universe is a curated list in `lib/universe.js` — edit it to
   change coverage. There are no API keys involved, so you can add/remove tickers freely.
 - Data is for educational/informational use only — **not investment advice**.
 

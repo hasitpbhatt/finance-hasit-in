@@ -1,21 +1,13 @@
-// GET /api/detail/AAPL — fast path: quote + chart + news only.
-// Signals (insider, newsIntel, leadership, hiring) are in /api/signals/AAPL.
-// All three sources run concurrently.
+import { getQuotes, getFundamentalsBatch, getChart, getNews } from '../../lib/yahoo.js';
+import { json, corsPreflight } from '../../lib/http.js';
 
-import { getQuotes, getFundamentalsBatch, getChart, getNews } from '../../../lib/yahoo.js';
-import { json, corsPreflight } from '../../../lib/http.js';
-
-export async function onRequest(context) {
-  if (context.request.method === 'OPTIONS') return corsPreflight();
-  const symbol = (context.params.symbol || '').toUpperCase();
+export default async function handler(request, { params }) {
+  if (request.method === 'OPTIONS') return corsPreflight();
+  const symbol = (params.symbol || '').toUpperCase();
   if (!symbol) return json({ error: 'symbol required' }, { status: 400 });
 
   const result = { symbol, degraded: false, errors: [] };
 
-  // Run all 4 fast sources concurrently.
-  // Chart: 2y daily (serves the 1M/3M/6M/1Y range buttons) + max (serves ALL).
-  // Yahoo coalesces range=max down to ~quarterly points, so short ranges must
-  // be sliced from the denser 2y series instead.
   const [quoteR, chartDailyR, chartHistoryR, newsR] = await Promise.allSettled([
     (async () => {
       try {
@@ -31,7 +23,6 @@ export async function onRequest(context) {
     getNews(symbol),
   ]);
 
-  // Quote
   if (quoteR.status === 'fulfilled' && quoteR.value) {
     Object.assign(result, quoteR.value);
   } else {
@@ -40,7 +31,6 @@ export async function onRequest(context) {
     result.errors.push('quote: ' + (quoteR.reason?.message || 'unavailable'));
   }
 
-  // Chart
   const daily = chartDailyR.status === 'fulfilled' && chartDailyR.value?.series?.length
     ? chartDailyR.value
     : { series: [] };
@@ -53,7 +43,6 @@ export async function onRequest(context) {
     result.errors.push('chart: ' + (chartDailyR.reason?.message || chartHistoryR.reason?.message || 'error'));
   }
 
-  // News
   if (newsR.status === 'fulfilled') {
     result.news = newsR.value;
   } else {

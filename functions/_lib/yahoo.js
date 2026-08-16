@@ -197,6 +197,15 @@ function normalizeFundamental(result) {
   const epsEstimate = earningsEstimate?.earningsEstimate?.avg?.raw ?? null;
   const epsEstimateHigh = earningsEstimate?.earningsEstimate?.high?.raw ?? null;
   const epsEstimateLow = earningsEstimate?.earningsEstimate?.low?.raw ?? null;
+  const epsGrowthPct = earningsEstimate?.earningsEstimate?.growth?.raw ?? null;
+
+  // Cash flow (owner earnings) — Buffett's lens
+  const freeCashflow = qRaw(fd, 'freeCashflow');
+  const operatingCashflow = qRaw(fd, 'operatingCashflow');
+  const ebitda = qRaw(fd, 'ebitda');
+  const totalRevenue = qRaw(fd, 'totalRevenue');
+  const returnOnAssets = qRaw(fd, 'returnOnAssets');
+  const netIncome = qRaw(fd, 'netIncome') ?? qRaw(dks, 'netIncomeToCommon');
 
   // Earnings surprise history (most recent 8 quarters)
   const surpriseHistory = eHist.slice(0, 8).map(h => ({
@@ -276,8 +285,10 @@ function normalizeFundamental(result) {
     analystConsensus, analystMean, targetMean, targetHigh, targetLow, targetMedian,
     numAnalysts, analystBreakdown,
     // Earnings
-    nextEarningsDate, epsEstimate, epsEstimateHigh, epsEstimateLow,
+    nextEarningsDate, epsEstimate, epsEstimateHigh, epsEstimateLow, epsGrowthPct,
     surpriseHistory, beatStreak,
+    // Cash flow
+    freeCashflow, operatingCashflow, ebitda, totalRevenue, returnOnAssets, netIncome,
     // Dividends
     dividendRate, exDividendDate, payoutRatio,
     // Short interest
@@ -334,14 +345,16 @@ export async function getFundamentalsBatch(symbols, concurrency = 20) {
 export async function getChart(symbol, range = '6mo', interval = '1d') {
   const url =
     `${YH}/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=${interval}`;
-  const { data } = await cachedJson(url, 3600);
+  // Daily close series changes at most a few times per session; 6h TTL keeps
+  // the chart fresh without hammering Yahoo (the heaviest endpoint by payload).
+  const { data } = await cachedJson(url, 21600);
   const result = data?.chart?.result?.[0];
   if (!result) return { series: [] };
   const timestamps = result.timestamp || [];
   const closes = result.indicators?.quote?.[0]?.close || [];
   const series = [];
   for (let i = 0; i < timestamps.length; i++) {
-    if (closes[i] != null) series.push({ t: timestamps[i], c: closes[i] });
+    if (closes[i] != null) series.push({ t: timestamps[i], c: closes[i], d: new Date(timestamps[i] * 1000).toISOString().slice(0, 10) });
   }
   return { series };
 }
@@ -432,15 +445,34 @@ export async function getOptionChain(symbol) {
 }
 
 // Compute option-derived signals from a chain. Returns a summary object.
-export function computeOptionSignals(chain, currentPrice) {
+export function computeOptionSignals(chain, currentPrice, opts = {}) {
   if (!chain?.chain?.length || !currentPrice) return null;
-  // Use nearest expiration
-  const nearest = chain.chain[0];
-  if (!nearest) return null;
-  const { calls, puts } = nearest;
-  const expiryEpoch = nearest.expiry;
   const now = Date.now();
-  const dte = expiryEpoch ? Math.max(1, Math.round((expiryEpoch * 1000 - now) / 86400000)) : null;
+  const dteFor = (epoch) => (epoch ? Math.max(1, Math.round((epoch * 1000 - now) / 86400000)) : null);
+  const dteOf = (e) => dteFor(e.expiry) ?? 99999;
+
+  // Expiry driving the expected move / probability bands.
+  // Default: expiration closest to 30 days. Explicit: the requested epoch.
+  let moveEntry;
+  if (opts.expiryEpoch != null) {
+    moveEntry = chain.chain.find(e => e.expiry === opts.expiryEpoch)
+      || chain.chain.reduce((best, e) => (!best || Math.abs(e.expiry - opts.expiryEpoch) < Math.abs(best.expiry - opts.expiryEpoch) ? e : best), null);
+  } else {
+    moveEntry = chain.chain.reduce((best, e) => {
+      if (!best) return e;
+      return (Math.abs(dteOf(e) - 30) < Math.abs(dteOf(best) - 30)) ? e : best;
+    }, null);
+  }
+  if (!moveEntry) return null;
+
+  // Expiry for positioning signals (put/call, max pain, support/resistance,
+  // unusual activity, IV). Default: nearest; explicit: same as the move expiry.
+  const activeEntry = opts.expiryEpoch != null ? moveEntry : chain.chain[0];
+  const { calls, puts } = activeEntry;
+  const moveCalls = moveEntry.calls || [];
+  const movePuts = moveEntry.puts || [];
+  const dte = dteFor(moveEntry.expiry) ?? 1;
+  const moveDate = moveEntry.expiry ? new Date(moveEntry.expiry * 1000).toISOString().split('T')[0] : null;
 
   // Aggregate volume and OI
   let callVol = 0, putVol = 0, callOI = 0, putOI = 0;
@@ -454,14 +486,25 @@ export function computeOptionSignals(chain, currentPrice) {
   const pcRatioVol = callVol > 0 ? putVol / callVol : null;
   const pcRatioOI = callOI > 0 ? putOI / callOI : null;
 
-  // --- Implied move (1 standard deviation) ---
+  // --- Implied move (1 standard deviation) from the MOVE expiry ---
   // ATM IV × price × sqrt(DTE/365) = expected dollar move
-  const atmCalls = calls.filter(c => c.iv > 0 && Math.abs(c.strike - currentPrice) / currentPrice < 0.03);
-  const atmPuts = puts.filter(p => p.iv > 0 && Math.abs(p.strike - currentPrice) / currentPrice < 0.03);
+  const atmCalls = moveCalls.filter(c => c.iv > 0 && Math.abs(c.strike - currentPrice) / currentPrice < 0.03);
+  const atmPuts = movePuts.filter(p => p.iv > 0 && Math.abs(p.strike - currentPrice) / currentPrice < 0.03);
   const atmIVs = [...atmCalls, ...atmPuts].map(c => c.iv);
   const atmIV = atmIVs.length ? atmIVs.reduce((a, b) => a + b, 0) / atmIVs.length : null;
   const expectedMoveDollar = (atmIV != null && dte != null) ? +(currentPrice * atmIV * Math.sqrt(dte / 365)).toFixed(2) : null;
   const expectedMovePct = expectedMoveDollar != null ? +(expectedMoveDollar / currentPrice * 100).toFixed(1) : null;
+
+  // --- Probability bands (normal-distribution approx centered on current price) ---
+  const sigma = expectedMoveDollar;
+  const probabilityBands = sigma != null ? {
+    p50: { lo: +(currentPrice - 0.674 * sigma).toFixed(2), hi: +(currentPrice + 0.674 * sigma).toFixed(2) },
+    p60: { lo: +(currentPrice - 0.842 * sigma).toFixed(2), hi: +(currentPrice + 0.842 * sigma).toFixed(2) },
+    p68: { lo: +(currentPrice - sigma).toFixed(2), hi: +(currentPrice + sigma).toFixed(2) },
+    p70: { lo: +(currentPrice - 1.036 * sigma).toFixed(2), hi: +(currentPrice + 1.036 * sigma).toFixed(2) },
+    p80: { lo: +(currentPrice - 1.282 * sigma).toFixed(2), hi: +(currentPrice + 1.282 * sigma).toFixed(2) },
+    p90: { lo: +(currentPrice - 1.645 * sigma).toFixed(2), hi: +(currentPrice + 1.645 * sigma).toFixed(2) },
+  } : null;
 
   // --- Probability of being above/below key prices (delta ≈ prob ITM) ---
   // Find the strikes closest to key levels: current price, ±expected move
@@ -508,7 +551,7 @@ export function computeOptionSignals(chain, currentPrice) {
   }
 
   // --- Layman summary ---
-  const bullish = (pcRatioVol != null && pcRatioVol < 0.7) || (expectedMovePct != null && expectedMovePct < 3);
+  const bullish = (pcRatioVol != null && pcRatioVol < 0.7) || (expectedMovePct != null && expectedMovePct < 3 * Math.sqrt(dte));
   const bearish = (pcRatioVol != null && pcRatioVol > 1.3) || (expectedMoveDollar != null && resistanceStrike != null && resistanceStrike < currentPrice + expectedMoveDollar);
   const sentiment = bullish ? 'Bullish' : bearish ? 'Bearish' : 'Neutral';
 
@@ -539,7 +582,7 @@ export function computeOptionSignals(chain, currentPrice) {
 
   return {
     available: true,
-    expiryDate: expiryEpoch ? new Date(expiryEpoch * 1000).toISOString().split('T')[0] : null,
+    expiryDate: moveDate,
     dte,
     callsCount: calls.length,
     putsCount: puts.length,
@@ -555,6 +598,7 @@ export function computeOptionSignals(chain, currentPrice) {
     nearMoneyIV: nearMoneyIV != null ? +nearMoneyIV.toFixed(4) : null,
     // --- Easy-to-read insights ---
     expectedMove: expectedMoveDollar != null ? { dollar: expectedMoveDollar, percent: expectedMovePct } : null,
+    probabilityBands,
     support: supportStrike != null ? { strike: supportStrike, oi: supportOI } : null,
     resistance: resistanceStrike != null ? { strike: resistanceStrike, oi: resistanceOI } : null,
     sentiment,

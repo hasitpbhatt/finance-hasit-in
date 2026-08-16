@@ -1,0 +1,25 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "bash": {
+      "*": "allow",
+      "git push -f*": "ask",
+      "git push --force*": "ask",
+      "git push *prod*": "deny",
+      "git push *refs/heads/prod*": "deny",
+      "git push *:prod*": "deny",
+      "git branch -D*prod*": "deny",
+      "git branch -d*prod*": "deny",
+      "gh api */branches/prod*": "deny",
+      "gh api *production-branch*": "deny",
+      "gh api *environments/*": "deny",
+      "gh api */deployments*": "deny",
+      "wrangler pages deploy*": "deny"
+    },
+    "edit": {
+      "AGENTS.md": "ask",
+      "opencode.json": "ask",
+      ".opencode/**": "ask"
+    }
+  }
+}

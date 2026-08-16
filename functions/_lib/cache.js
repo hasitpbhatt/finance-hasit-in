@@ -28,13 +28,18 @@ async function store(url, text, contentType) {
   await caches.default.put(new Request(url), response);
 }
 
-// Fetch with retry on 429/503. Max 2 retries, exponential backoff.
+// Fetch with retry on 429/503. Max 2 retries. Honors the upstream Retry-After
+// header when present, otherwise exponential backoff (capped so we never sit on
+// a function worker for too long).
 async function retryFetch(url, opts = {}, retries = 2) {
   for (let attempt = 0; attempt <= retries; attempt++) {
     const res = await fetch(url, opts);
     if (res.status === 429 || res.status === 503) {
       if (attempt < retries) {
-        const delay = Math.min(1000 * 2 ** attempt, 4000);
+        const retryAfter = Number(res.headers.get('Retry-After'));
+        const delay = Number.isFinite(retryAfter) && retryAfter > 0
+          ? Math.min(retryAfter * 1000, 5000)
+          : Math.min(1000 * 2 ** attempt, 4000);
         await new Promise(r => setTimeout(r, delay));
         continue;
       }

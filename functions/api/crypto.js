@@ -9,12 +9,12 @@ export async function onRequest(context) {
   try {
     const results = await getCrypto(perPage);
     return json(
-      { count: results.length, results, degraded: false },
+      { count: results.length, results, degraded: false, clientFallback: true },
       { headers: { 'Cache-Control': 's-maxage=300' } },
     );
   } catch (e) {
     return json(
-      { count: 0, results: [], degraded: true, error: e.message },
+      { count: 0, results: [], degraded: true, clientFallback: true, error: e.message },
       { status: 200, headers: { 'Cache-Control': 'no-store' } },
     );
   }

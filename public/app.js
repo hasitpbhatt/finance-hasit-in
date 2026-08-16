@@ -34,47 +34,110 @@ async function getJSON(url) {
   return res.json();
 }
 
-// ---------- score rendering ----------
-function scoreGaugeHtml(score) {
+// ---------- icons ----------
+const ICONS = {
+  chevron: '<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6 3.5 10 8 6 12.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  copy: '<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M10.5 5.5v-1a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1h1" stroke="currentColor" stroke-width="1.4"/></svg>',
+};
+
+// ---------- score dial (radial 0–100 arc) ----------
+function scoreDialHtml(score) {
   if (!score) return '';
   const v = score.value;
   const pct = Math.round(((v + 100) / 200) * 100);
-  const fillClass = v >= 30 ? 'hi' : v >= -30 ? 'mid' : '';
-  const gradeClass = v >= 10 ? 'up' : v > -10 ? 'mid' : 'down';
+  const dialCls = v >= 30 ? 'up' : v >= -30 ? 'mid' : 'down';
+  const gradeCls = v >= 10 ? 'up' : v > -10 ? 'mid' : 'down';
   const gradeLabel = (score.label || 'neutral').replace(/_/g, ' ');
-
+  const ARC = Math.PI * 46;
+  const dash = (ARC * pct) / 100;
   return `
-    <div class="score-hero">
-      <div class="score-gauge">
-        <div class="score-gauge-fill ${fillClass}" style="width:${pct}%"></div>
-      </div>
-      <div class="score-gauge-label ${gradeClass}">${v > 0 ? '+' : ''}${v}</div>
+    <div class="score-dial">
+      <svg class="score-dial-svg" viewBox="0 0 120 74" role="img" aria-label="Quality score ${v}">
+        <path class="score-dial-track" d="M 14 62 A 46 46 0 0 1 106 62" fill="none"/>
+        <path class="score-dial-fill ${dialCls}" d="M 14 62 A 46 46 0 0 1 106 62" fill="none" stroke-dasharray="${dash.toFixed(2)} ${ARC.toFixed(2)}"/>
+      </svg>
+      <div class="score-dial-value ${gradeCls}">${v > 0 ? '+' : ''}${v}</div>
+      <div class="score-dial-grade">${gradeLabel}</div>
     </div>
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
-      <span class="score-grade ${gradeClass}">${gradeLabel}</span>
-      <span class="muted" style="font-size:12px;">${score.factors.length} signal${score.factors.length !== 1 ? 's' : ''}</span>
-    </div>
-    <div class="score-factors">
-      ${score.factors.map(f => {
+    <div class="score-dial-meta">${score.factors.length} signal${score.factors.length !== 1 ? 's' : ''}</div>`;
+}
+
+// Quality-vs-Noise framing: long-term score vs short-term market pulse.
+function qualityVsNoiseHtml(s) {
+  const chips = [];
+  if (s.score) {
+    const sv = s.score.value;
+    const cls = sv >= 10 ? 'up' : sv > -10 ? 'mid' : 'down';
+    chips.push(`<span class="qn-chip" title="Quality = long-term business health"><span class="qn-dot ${cls}"></span>Quality <strong>${sv > 0 ? '+' : ''}${sv}</strong></span>`);
+  }
+  if (s.marketPulse) {
+    const mv = s.marketPulse.value;
+    const cls = mv > 10 ? 'up' : mv < -10 ? 'down' : 'neutral';
+    chips.push(`<span class="qn-chip qn-muted" title="Market pulse = short-term crowd &amp; options noise — not part of the long-term verdict"><span class="qn-dot ${cls}"></span>Market pulse <strong>${mv > 0 ? '+' : ''}${mv}</strong></span>`);
+  }
+  if (!chips.length) return '';
+  return `<div class="quality-vs-noise">${chips.join('')}</div>`;
+}
+
+// Verdict strip — always-visible summary above the chart.
+function verdictStripHtml(d, s) {
+  const flag = s.signalFlags?.redFlag
+    ? '<div class="flag-banner">⚠ Red flag: officer departures + insider selling</div>'
+    : '';
+  const factors = s.score?.factors?.length
+    ? `<div class="score-factors">${s.score.factors.map(f => {
         const cls = f.score > 0 ? 'up' : f.score < 0 ? 'down' : 'mid';
         const label = f.score > 0 ? '+' + f.score : f.score;
         return `<span class="score-factor"><span class="dot ${cls}"></span>${f.label} ${label}</span>`;
-      }).join('')}
+      }).join('')}</div>`
+    : '';
+  return `
+    <div class="verdict-strip">
+      ${flag}
+      <div class="verdict-top">
+        <div>${scoreDialHtml(s.score)}</div>
+        <div class="verdict-narrative">
+          ${qualityVsNoiseHtml(s)}
+          ${narrativeBreathHtml(s)}
+        </div>
+        <div class="verdict-copy">${copyVerdictHtml(d, s)}</div>
+      </div>
+      ${factors}
     </div>`;
 }
 
 // ---------- narrative ----------
+const NARRATIVE_PERSONAS = {
+  summary: { label: 'Overview', blurb: 'Balanced overview' },
+  buffett: { label: 'Buffett', blurb: 'Moat · owner earnings · 10-year view' },
+  munger: { label: 'Munger', blurb: 'Invert · incentives · psychology' },
+  graham: { label: 'Graham', blurb: 'Margin of safety · balance sheet' },
+  lynch: { label: 'Lynch', blurb: 'The story · PEG · growth at a fair price' },
+  fisher: { label: 'Fisher', blurb: 'Business & management quality · patience' },
+  templeton: { label: 'Templeton', blurb: 'Contrarian bargains · maximum pessimism' },
+};
+
 function narrativeBreathHtml(s) {
   if (!s.narrative?.available || !s.narrative.text) return '';
+  const personas = s.narrative.personas || {};
   const text = s.narrative.text;
   const cutAt = text.lastIndexOf('. ', 180);
   const breath = cutAt > 50 ? text.substring(0, cutAt + 1) : text.substring(0, 180) + '…';
   const full = text;
+
+  const pills = Object.keys(NARRATIVE_PERSONAS).map(k => {
+    const has = k === 'summary' ? true : !!personas[k];
+    if (!has) return '';
+    const p = NARRATIVE_PERSONAS[k];
+    return `<button class="persona-pill${k === 'summary' ? ' active' : ''}" data-persona="${k}" data-full="${encodeURIComponent(k === 'summary' ? full : personas[k])}" title="${p.blurb}">${p.label}</button>`;
+  }).join('');
+
   return `
     <div class="narrative-breath">
+      ${pills ? `<div class="persona-row">${pills}</div>` : ''}
       <span class="breath-text">${breath}</span>
       ${breath !== full ? `<span class="more" data-full="${encodeURIComponent(full)}">read more</span>` : ''}
-      <div class="meta" style="margin-top:4px;font-size:11px;">AI-generated · not investment advice</div>
+      <div class="caption mt-1">AI-generated · not investment advice</div>
     </div>`;
 }
 
@@ -85,7 +148,7 @@ function copyVerdictHtml(d, s) {
   const grade = s.score?.label?.replace(/_/g, ' ') || 'unknown';
   const scoreVal = s.score?.value ?? 0;
   const text = `${d.symbol} ${price} (${chg}) · Verdict: ${grade} (${scoreVal > 0 ? '+' : ''}${scoreVal})`;
-  return `<button class="copy-btn" data-copy="${encodeURIComponent(text)}" title="Copy verdict">⧉ Copy verdict</button>`;
+  return `<button class="copy-btn" data-copy="${encodeURIComponent(text)}" title="Copy verdict">${ICONS.copy} Copy verdict</button>`;
 }
 
 // ---------- hero ----------
@@ -104,12 +167,24 @@ function heroHtml(d, s) {
 }
 
 // ---------- chart ----------
-let currentChart = null;
+const RANGE_DAYS = { '1M': 31, '3M': 92, '6M': 183, '1Y': 365, 'ALL': Infinity };
+function sliceSeriesByRange(chart, range) {
+  // ALL uses the full-history series (range=max, quarterly-sampled by Yahoo).
+  // Short ranges are sliced from the dense 2y daily series so they don't end up
+  // with just 1-4 points.
+  if (range === 'ALL') return (chart && chart.history && chart.history.length) ? chart.history : (chart?.series || []);
+  const full = (chart && chart.series) || [];
+  const days = RANGE_DAYS[range];
+  if (days === undefined || days === Infinity) return full;
+  const cutoff = Date.now() - days * 86400000;
+  const sliced = full.filter(p => p.t * 1000 >= cutoff);
+  return sliced.length ? sliced : full;
+}
 
 function drawChart(chart, range) {
   const canvas = $('#detail-canvas');
   if (!canvas) return;
-  const series = (chart && chart.series) || [];
+  const series = sliceSeriesByRange(chart, range);
   const ctx = canvas.getContext('2d');
   const dpr = window.devicePixelRatio || 1;
   const w = canvas.clientWidth;
@@ -145,13 +220,16 @@ function drawChart(chart, range) {
   grad.addColorStop(0, fillColor);
   grad.addColorStop(1, 'transparent');
 
-  // animate: draw progressively
+  // animate: draw progressively (skip for large series to avoid stutter)
   const totalPts = series.length;
-  let drawn = 0;
+  const animate = totalPts <= 1500;
+  let drawn = animate ? 0 : totalPts;
 
   function frame() {
-    drawn += Math.max(1, Math.floor(totalPts / 20));
-    if (drawn > totalPts) drawn = totalPts;
+    if (animate) {
+      drawn += Math.max(1, Math.floor(totalPts / 20));
+      if (drawn > totalPts) drawn = totalPts;
+    }
     ctx.clearRect(0, 0, w, h);
 
     // fill area
@@ -190,7 +268,7 @@ function drawChart(chart, range) {
       ctx.fill();
     }
 
-    if (drawn < totalPts) requestAnimationFrame(frame);
+    if (animate && drawn < totalPts) requestAnimationFrame(frame);
   }
 
   requestAnimationFrame(frame);
@@ -204,15 +282,13 @@ function drawChart(chart, range) {
     if (idx < 0 || idx >= totalPts) { if (tooltip) tooltip.classList.remove('show'); return; }
     const pt = series[idx];
     if (tooltip) {
-      tooltip.innerHTML = `<div class="num" style="font-weight:600;">${fmtMoney(pt.c)}</div><div class="muted" style="font-size:11px;">${pt.d || ''}</div>`;
+      tooltip.innerHTML = `<div class="chart-tip-price">${fmtMoney(pt.c)}</div><div class="caption">${pt.d || ''}</div>`;
       tooltip.classList.add('show');
       tooltip.style.left = Math.min(mx + 12, w - 120) + 'px';
       tooltip.style.top = '8px';
     }
   };
   canvas.onmouseleave = () => { if (tooltip) tooltip.classList.remove('show'); };
-
-  currentChart = { chart, range };
 }
 
 function chartHtml(d) {
@@ -233,124 +309,213 @@ function sectionHtml(id, title, content, open) {
     <div class="story-section${open ? ' open' : ''}" data-section="${id}">
       <button class="story-toggle" aria-expanded="${open}">
         <span>${title}</span>
-        <span class="chevron">▸</span>
+        <span class="chevron">${ICONS.chevron}</span>
       </button>
       <div class="story-body">${content}</div>
     </div>`;
 }
 
 // ---------- signal section content ----------
-function verdictContent(s) {
-  let html = '';
-  if (s.signalFlags?.redFlag) html += '<div class="flag-banner">⚠ Red flag: officer departures + insider selling</div>';
-  html += scoreGaugeHtml(s.score);
-  return html;
+// Plain-English-first pattern: one takeaway sentence + colored chips, with raw
+// numbers tucked behind a "Why / the numbers" expander so novices aren't buried
+// in jargon.
+function insightHtml({ sentence, chips, details }) {
+  const chipHtml = chips?.length
+    ? `<div class="insight-chips">${chips.map(c => `<span class="chip ${c.cls || ''}">${c.text}</span>`).join('')}</div>`
+    : '';
+  const detailsHtml = details
+    ? `<details class="raw-details"><summary>Why / the numbers</summary><div class="signal-grid mt-2">${details}</div></details>`
+    : '';
+  return `<div class="insight">${sentence ? `<p class="insight-text">${sentence}</p>` : ''}${chipHtml}${detailsHtml}</div>`;
 }
 
-function whyContent(s) {
-  let html = '';
-  const breath = narrativeBreathHtml(s);
-  if (breath) html += breath;
-  // top reasons from score factors
-  if (s.score?.factors?.length) {
-    const sorted = [...s.score.factors].sort((a, b) => Math.abs(b.score) - Math.abs(a.score));
-    const top = sorted.slice(0, 3);
-    html += '<div style="margin-top:12px;">';
-    html += top.map(f => {
-      const cls = f.score > 0 ? 'up' : f.score < 0 ? 'down' : '';
-      return `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:13px;"><span class="dot ${cls}" style="width:6px;height:6px;border-radius:50%;flex-shrink:0;"></span>${f.label}: <strong class="${cls}">${f.score > 0 ? '+' : ''}${f.score}</strong></div>`;
-    }).join('');
-    html += '</div>';
+// The Business — "what do they do?" (Lynch: explain it to your grandmother)
+function businessContent(d, s) {
+  const parts = [];
+  const name = d.name || s.name || '';
+  if (name) parts.push(name);
+  const sector = d.sector || s.sector || null;
+  const industry = d.industry || s.industry || null;
+  if (sector && industry && sector.toLowerCase() !== industry.toLowerCase()) parts.push(`${sector} — ${industry}`);
+  else if (sector) parts.push(sector);
+  const cap = d.marketCap ?? null;
+  if (cap != null) parts.push(`worth ${fmtCap(cap)}`);
+
+  let sentence = 'No company profile available.';
+  if (parts.length) sentence = `${parts.join(' · ')}.`;
+  const chips = [];
+  if (cap != null) chips.push({ text: fmtCap(cap) });
+  const details = [];
+  if (d.exchange) details.push(`<div><span>Exchange</span><span>${d.exchange}</span></div>`);
+  if (d.type) details.push(`<div><span>Type</span><span>${d.type}</span></div>`);
+  return insightHtml({ sentence, chips, details: details.length ? details.join('') : null });
+}
+
+// Quality — "is it a good business?" (Buffett: moat, returns, debt)
+function qualityContent(s) {
+  const v = s.value;
+  if (!v) return '<p class="muted">Fundamentals unavailable.</p>';
+  const roe = v.roe;
+  const debtEq = v.debtToEquity;
+  const curRatio = v.currentRatio;
+  const gross = v.grossMargin;
+  const profit = v.profitMargin;
+
+  let take = '';
+  const chips = [];
+  if (roe != null) {
+    const r = roe * 100;
+    if (r >= 15) { take += 'A strong business — earns well on shareholder money.'; chips.push({ text: `ROE ${r.toFixed(1)}%`, cls: 'up' }); }
+    else if (r >= 10) { take += 'A solid business — decent returns on shareholder money.'; chips.push({ text: `ROE ${r.toFixed(1)}%`, cls: 'up' }); }
+    else { take += 'A weak business — returns on shareholder money are thin.'; chips.push({ text: `ROE ${r.toFixed(1)}%`, cls: 'down' }); }
   }
-  return html || '<p class="muted" style="font-size:13px;">No data available for a verdict.</p>';
+  if (debtEq != null) {
+    if (debtEq < 1) take += ' It keeps debt low.'; else if (debtEq < 2) take += ' Debt is moderate.'; else take += ' Debt is high — watch it.';
+    chips.push({ text: `Debt/equity ${debtEq.toFixed(2)}`, cls: debtEq < 1 ? 'up' : debtEq < 2 ? '' : 'down' });
+  }
+  if (take === '') take = 'Business quality data is thin.';
+
+  const details = [];
+  if (gross != null) details.push(`<div><span>Gross margin</span><span>${(gross * 100).toFixed(1)}%</span></div>`);
+  if (profit != null) details.push(`<div><span>Net margin</span><span>${(profit * 100).toFixed(1)}%</span></div>`);
+  if (roe != null) details.push(`<div><span>Return on equity</span><span>${(roe * 100).toFixed(1)}%</span></div>`);
+  if (v.roa != null) details.push(`<div><span>Return on assets</span><span>${(v.roa * 100).toFixed(1)}%</span></div>`);
+  if (debtEq != null) details.push(`<div><span>Debt / equity</span><span>${debtEq.toFixed(2)}</span></div>`);
+  if (curRatio != null) details.push(`<div><span>Current ratio</span><span>${curRatio.toFixed(2)}</span></div>`);
+  if (v.fcfYield != null) details.push(`<div><span>Free cash-flow yield</span><span>${v.fcfYield}%</span></div>`);
+
+  return insightHtml({ sentence: take, chips, details: details.length ? details.join('') : null });
 }
 
-function fundamentalsContent(s) {
-  if (!s.xbrl?.available) return '<p class="muted" style="font-size:13px;">SEC XBRL data unavailable.</p>';
+// Growth — "is it growing, and is the price fair for that growth?" (Lynch)
+function growthContent(s) {
   const x = s.xbrl;
-  const rows = [];
-  const trendIcon = (t) => {
-    if (t === 'strong_growth' || t === 'growing') return '<span class="up">↑</span>';
-    if (t === 'declining' || t === 'sharply_declining') return '<span class="down">↓</span>';
-    return '<span class="muted">→</span>';
-  };
-  const trendCls = (t) => {
-    if (t === 'strong_growth' || t === 'growing') return 'up';
-    if (t === 'declining' || t === 'sharply_declining') return 'down';
-    return 'muted';
-  };
+  const v = s.value;
+  const chips = [];
+  const details = [];
+  let take = 'Growth data is thin.';
 
-  if (x.revenue?.latest != null) {
-    rows.push(`<div><span>Revenue (${x.latestFY || ''})</span><span>${fmtMoney(x.revenue.latest)}</span></div>`);
-    rows.push(`<div><span>Revenue trend</span><span>${trendIcon(x.revenue.trend)} <span class="${trendCls(x.revenue.trend)}">${x.revenue.trendLabel}</span></span></div>`);
+  if (x?.available && x.revenue?.latest != null) {
+    details.push(`<div><span>Revenue (${x.latestFY || ''})</span><span>${fmtMoney(x.revenue.latest)}</span></div>`);
+    const avgG = x.revenue.growth?.length
+      ? (x.revenue.growth.reduce((a, g) => a + g.growth, 0) / x.revenue.growth.length).toFixed(1)
+      : null;
+    if (avgG != null) details.push(`<div><span>Avg revenue growth</span><span class="${avgG >= 0 ? 'up' : 'down'}">${avgG}%</span></div>`);
+    if (x.netIncome?.latest != null) details.push(`<div><span>Net income (${x.latestFY || ''})</span><span>${fmtMoney(x.netIncome.latest)}</span></div>`);
   }
-  if (x.netIncome?.latest != null) {
-    rows.push(`<div><span>Net Income (${x.latestFY || ''})</span><span>${fmtMoney(x.netIncome.latest)}</span></div>`);
-    rows.push(`<div><span>Net Income trend</span><span>${trendIcon(x.netIncome.trend)} <span class="${trendCls(x.netIncome.trend)}">${x.netIncome.trendLabel}</span></span></div>`);
+
+  const beatStreak = s.earnings?.available ? s.earnings.beatStreak ?? 0 : 0;
+  if (beatStreak > 0) { take = `Earnings have beaten estimates ${beatStreak} quarters in a row.`; chips.push({ text: `${beatStreak}-qtr beat streak`, cls: 'up' }); }
+
+  if (v?.peg != null) {
+    if (v.peg < 1) { take += ' Growth is cheap relative to the price you pay.'; chips.push({ text: `PEG ${v.peg}`, cls: 'up' }); }
+    else if (v.peg < 1.5) { take += ' Growth looks reasonably priced.'; chips.push({ text: `PEG ${v.peg}` }); }
+    else if (v.peg < 2) { take += ' Growth is getting pricey.'; chips.push({ text: `PEG ${v.peg}`, cls: 'warn' }); }
+    else { take += ' Growth is expensive relative to the price.'; chips.push({ text: `PEG ${v.peg}`, cls: 'down' }); }
+    details.push(`<div><span>PEG (price/growth)</span><span>${v.peg}</span></div>`);
   }
-  if (x.revenue?.growth?.length) {
-    rows.push(`<div><span>Avg Revenue Growth</span><span class="${x.revenue.growth[0]?.growth >= 0 ? 'up' : 'down'}">${(x.revenue.growth.reduce((s, g) => s + g.growth, 0) / x.revenue.growth.length).toFixed(1)}%</span></div>`);
+
+  if (x?.available) {
+    const revT = x.revenue?.trend;
+    const niT = x.netIncome?.trend;
+    const revGrowing = revT === 'strong_growth' || revT === 'growing';
+    const revShrinking = revT === 'declining' || revT === 'sharply_declining';
+    const niGrowing = niT === 'strong_growth' || niT === 'growing';
+    const niShrinking = niT === 'declining' || niT === 'sharply_declining';
+    if (revGrowing) chips.push({ text: 'Revenue growing', cls: 'up' });
+    else if (revShrinking) chips.push({ text: 'Revenue shrinking', cls: 'down' });
+    if (niGrowing) chips.push({ text: 'Earnings growing', cls: 'up' });
+    else if (niShrinking) chips.push({ text: 'Earnings shrinking', cls: 'down' });
+    if (take === 'Growth data is thin.' && (revGrowing || revShrinking || niGrowing || niShrinking)) {
+      take = (revGrowing || niGrowing)
+        ? 'The business is growing.'
+        : 'The business has been shrinking.';
+    }
+    if (details.length) details.push(`<div><span>Revenue trend</span><span>${x.revenue?.trendLabel || '—'}</span></div>`);
+    if (x.netIncome?.latest != null) details.push(`<div><span>Net income trend</span><span>${x.netIncome.trendLabel || '—'}</span></div>`);
   }
-  return rows.length ? `<div class="signal-grid">${rows.join('')}</div>` : '<p class="muted" style="font-size:13px;">Insufficient data.</p>';
+
+  if (!chips.length) take = 'Growth data is thin.';
+  return insightHtml({ sentence: take, chips, details: details.length ? details.join('') : null });
 }
 
-function analystsContent(s) {
-  if (!s.analyst?.available) return '<p class="muted" style="font-size:13px;">Analyst data unavailable.</p>';
+// Price vs Value — "am I paying a fair price?" (Graham/Buffett: margin of safety)
+function priceContent(d, s) {
+  const v = s.value;
   const a = s.analyst;
-  const rows = [];
-  rows.push(`<div><span>Consensus</span><span>${a.consensus ? a.consensus.charAt(0).toUpperCase() + a.consensus.slice(1) : '—'}</span></div>`);
-  rows.push(`<div><span>Analysts</span><span>${a.numAnalysts ?? '—'}</span></div>`);
-  rows.push(`<div><span>Target (mean)</span><span>${a.targetMean != null ? fmtMoney(a.targetMean) : '—'}</span></div>`);
-  rows.push(`<div><span>Upside</span><span class="${a.upsidePct >= 0 ? 'up' : 'down'}">${a.upsidePct != null ? fmtPct(a.upsidePct) : '—'}</span></div>`);
-  if (a.breakdown) {
-    const b = a.breakdown;
-    const chips = [];
-    if (b.strongBuy > 0) chips.push(`<span class="chip up">Strong Buy ${b.strongBuy}</span>`);
-    if (b.buy > 0) chips.push(`<span class="chip up">Buy ${b.buy}</span>`);
-    if (b.hold > 0) chips.push(`<span class="chip">Hold ${b.hold}</span>`);
-    if (b.sell > 0) chips.push(`<span class="chip down">Sell ${b.sell}</span>`);
-    if (b.strongSell > 0) chips.push(`<span class="chip down">Strong Sell ${b.strongSell}</span>`);
-    if (chips.length) rows.push(`<div><span>Breakdown</span><span>${chips.join(' ')}</span></div>`);
+  const price = d.price ?? s.price ?? null;
+  const chips = [];
+  const details = [];
+  let take = '';
+
+  if (price != null) {
+    const fair = v?.grahamFairValue;
+    if (fair != null) {
+      const gap = ((price - fair) / fair) * 100;
+      if (gap <= -15) { take = `Trading about ${Math.abs(gap).toFixed(0)}% below a rough fair value of ${fmtMoney(fair)} — a margin of safety.`; chips.push({ text: `Fair value ${fmtMoney(fair)}`, cls: 'up' }); }
+      else if (gap <= 15) { take = `Trading roughly at a fair value of about ${fmtMoney(fair)}.`; chips.push({ text: `Fair value ${fmtMoney(fair)}` }); }
+      else { take = `Trading about ${gap.toFixed(0)}% above a rough fair value of ${fmtMoney(fair)} — little margin of safety.`; chips.push({ text: `Fair value ${fmtMoney(fair)}`, cls: 'down' }); }
+      details.push(`<div><span>Graham fair value</span><span>${fmtMoney(fair)}</span></div>`);
+    } else {
+      take = 'A reasonable price is hard to pin down from the available data.';
+    }
   }
-  // earnings
-  if (s.earnings?.available) {
-    const e = s.earnings;
-    if (e.beatStreak > 0) rows.push(`<div><span>Beat streak</span><span class="up">${e.beatStreak} quarters</span></div>`);
+
+  if (a?.available && a.targetMean != null && price != null) {
+    const upside = ((a.targetMean - price) / price) * 100;
+    if (upside > 10) take += ` Analysts see ${fmtMoney(a.targetMean)} (${upside >= 0 ? '+' : ''}${upside.toFixed(0)}%).`;
+    chips.push({ text: `Analyst target ${fmtMoney(a.targetMean)}`, cls: upside > 5 ? 'up' : upside < -5 ? 'down' : '' });
+    details.push(`<div><span>Analyst target (mean)</span><span>${fmtMoney(a.targetMean)}</span></div>`);
+    if (a.numAnalysts != null) details.push(`<div><span>Coverage</span><span>${a.numAnalysts} analysts</span></div>`);
   }
-  return `<div class="signal-grid">${rows.join('')}</div>`;
+
+  if (d.pe != null) { details.push(`<div><span>P/E (trailing)</span><span>${d.pe.toFixed(1)}</span></div>`); chips.push({ text: `P/E ${d.pe.toFixed(1)}`, cls: d.pe > 0 && d.pe < 20 ? 'up' : d.pe > 35 ? 'down' : '' }); }
+  if (d.forwardPe != null) details.push(`<div><span>P/E (forward)</span><span>${d.forwardPe.toFixed(1)}</span></div>`);
+  if (d.priceToBook != null) details.push(`<div><span>Price/book</span><span>${d.priceToBook.toFixed(1)}</span></div>`);
+  if (v?.earningsYield != null) details.push(`<div><span>Earnings yield</span><span>${v.earningsYield}%</span></div>`);
+  if (v?.fcfYield != null) { details.push(`<div><span>Free cash-flow yield</span><span>${v.fcfYield}%</span></div>`); if (v.fcfYield >= 4) chips.push({ text: `FCF yield ${v.fcfYield}%`, cls: 'up' }); }
+  if (d.dividendYield != null) details.push(`<div><span>Dividend yield</span><span>${(d.dividendYield * 100).toFixed(2)}%</span></div>`);
+
+  if (take === '') take = 'Price data is thin.';
+  return insightHtml({ sentence: take, chips, details: details.length ? details.join('') : null });
 }
 
-function tradingContent(s) {
-  let html = '';
+// Watch-outs — risks, red flags, concerning trends (Munger: invert)
+function watchoutsContent(d, s) {
+  const items = [];
+  const chips = [];
+  if (s.signalFlags?.redFlag) items.push('⚠ Officer departures alongside insider selling — treat with caution.');
+  const v = s.value;
+  if (v?.debtToEquity != null && v.debtToEquity >= 2) { chips.push({ text: `High debt ${v.debtToEquity.toFixed(1)}x`, cls: 'down' }); items.push('Debt is high relative to equity.'); }
+  const x = s.xbrl;
+  if (x?.available) {
+    if (x.revenue?.trend === 'declining' || x.revenue?.trend === 'sharply_declining') items.push('Revenue has been declining.');
+    if (x.netIncome?.trend === 'declining' || x.netIncome?.trend === 'sharply_declining') items.push('Net income has been declining.');
+  }
+  if (s.shortInterest?.available && s.shortInterest.shortPercentOfFloat != null && s.shortInterest.shortPercentOfFloat > 0.15) {
+    chips.push({ text: `${(s.shortInterest.shortPercentOfFloat * 100).toFixed(1)}% shorted`, cls: 'warn' });
+    items.push('A lot of the float is sold short — heavy bearish positioning.');
+  }
 
-  // options layman
+  if (!items.length && !chips.length) return '<p class="muted">No obvious red flags from the data we can see.</p>';
+  const html = items.length ? `<ul class="watch-list">${items.map(i => `<li>${i}</li>`).join('')}</ul>` : '';
+  return insightHtml({ sentence: html, chips, details: null });
+}
+
+// Market noise — short-term trading signals, demoted and labeled as noise.
+function marketNoiseContent(s, symbol) {
+  let html = '<div class="noise-note">Short-term market bets and crowd sentiment. Not part of the long-term verdict.</div>';
+
+  // market pulse score (context only)
+  if (s.marketPulse) {
+    const m = s.marketPulse;
+    const cls = m.value > 10 ? 'up' : m.value < -10 ? 'down' : '';
+    html += `<div class="mt-2 mb-2"><span class="caption">Market pulse:</span> <span class="chip ${cls}">${m.value > 0 ? '+' : ''}${m.value}</span> <span class="caption">options + crowd + news, short-term</span></div>`;
+  }
+
+  // options — friendly probability view
   if (s.options?.available && s.options.signals?.available) {
-    const sig = s.options.signals;
-    const exp = sig.expectedMove;
-    const dte = sig.dte;
-    const parts = [];
-    if (exp) {
-      const lo = (s.options.currentPrice - exp.dollar).toFixed(2);
-      const hi = (s.options.currentPrice + exp.dollar).toFixed(2);
-      parts.push(`<div class="layman-row"><div class="layman-label">Expected move (${dte != null ? dte + 'd' : ''})</div><div class="layman-range"><span class="down">${fmtMoney(lo)}</span> — <span class="up">${fmtMoney(hi)}</span></div><div class="layman-sub">±${fmtMoney(exp.dollar)} (${exp.percent}%)</div></div>`);
-    }
-    if (sig.support) parts.push(`<div class="layman-row"><div class="layman-label">Support</div><span class="up">${fmtMoney(sig.support.strike)}</span></div>`);
-    if (sig.resistance) parts.push(`<div class="layman-row"><div class="layman-label">Resistance</div><span class="down">${fmtMoney(sig.resistance.strike)}</span></div>`);
-    if (sig.maxPain) parts.push(`<div class="layman-row"><div class="layman-label">Max pain</div><span>${fmtMoney(sig.maxPain)}</span></div>`);
-    if (parts.length) {
-      const sentCls = sig.sentiment === 'Bullish' ? 'up' : sig.sentiment === 'Bearish' ? 'down' : '';
-      html += `<div style="margin-bottom:12px;"><span class="chip ${sentCls}">${sig.sentiment}</span> <span class="muted" style="font-size:11px;">${dte != null ? dte + 'd to expiry' : ''}</span></div>`;
-      html += parts.join('');
-    }
-
-    // raw numbers
-    const rawRows = [];
-    rawRows.push(`<div><span>Calls / Puts</span><span>${sig.callsCount} / ${sig.putsCount}</span></div>`);
-    rawRows.push(`<div><span>Put/Call ratio</span><span>${sig.pcRatioVol?.toFixed(3) ?? '—'}</span></div>`);
-    if (sig.avgIV != null) rawRows.push(`<div><span>Avg IV</span><span>${(sig.avgIV * 100).toFixed(1)}%</span></div>`);
-    if (rawRows.length) {
-      html += `<details class="raw-details"><summary>Raw numbers</summary><div class="signal-grid" style="margin-top:8px;">${rawRows.join('')}</div></details>`;
-    }
+    html += optionsBlockHtml(s.options, symbol);
   }
 
   // short interest
@@ -363,28 +528,210 @@ function tradingContent(s) {
       rows.push(`<div><span>% Float Short</span><span class="${cls}">${pct}%</span></div>`);
     }
     if (si.shortRatio != null) rows.push(`<div><span>Days to cover</span><span>${si.shortRatio}</span></div>`);
-    if (rows.length) {
-      if (html) html += '<div style="margin-top:12px;">';
-      html += `<h4 style="margin-bottom:4px;">Short Interest</h4><div class="signal-grid">${rows.join('')}</div>`;
-      if (html) html += '</div>';
-    }
+    if (rows.length) html += `<h4 class="sub-tight">Short Interest</h4><div class="signal-grid">${rows.join('')}</div>`;
   }
 
   // retail sentiment
   if (s.retail?.available) {
     const r = s.retail;
-    html += '<div style="margin-top:12px;">';
-    html += `<h4 style="margin-bottom:4px;">Retail Sentiment</h4>`;
+    html += '<div class="mt-3">';
+    html += `<h4 class="sub-tight">Retail Sentiment</h4>`;
     html += `<div class="sentiment-bar"><div class="sentiment-bar-fill up" style="width:${r.bullPct}%"></div><div class="sentiment-bar-fill down" style="width:${r.bearPct}%"></div></div>`;
-    html += `<div style="display:flex;justify-content:space-between;font-size:12px;margin-top:4px;"><span class="up">Bull ${r.bullPct}%</span><span class="muted">${r.total} msgs</span><span class="down">Bear ${r.bearPct}%</span></div>`;
+    html += `<div class="flex-between mt-1 caption"><span class="up">Bull ${r.bullPct}%</span><span class="muted">${r.total} msgs</span><span class="down">Bear ${r.bearPct}%</span></div>`;
     html += '</div>';
   }
 
-  return html || '<p class="muted" style="font-size:13px;">Options data unavailable.</p>';
+  return html;
+}
+
+// Friendly options block: probability bands + bell curve, jargon tucked away.
+function optionsBlockHtml(o, symbol) {
+  const sig = o.signals;
+  if (!sig?.available) return '';
+  const price = o.currentPrice;
+  const bands = sig.probabilityBands;
+  const dte = sig.dte;
+  const sentCls = sig.sentiment === 'Bullish' ? 'up' : sig.sentiment === 'Bearish' ? 'down' : '';
+  const expirations = o.expirations || [];
+  const moveDate = sig.expiryDate;
+
+  let html = '<div class="options-block">';
+
+  // sigma bell curve on top
+  if (bands && price != null) {
+    const sigma = +(bands.p68.hi - price).toFixed(2);
+    html += `<div class="prob-graph"><canvas class="prob-dist-canvas" data-price="${price}" data-sigma="${sigma}"></canvas></div>`;
+    html += `<div class="prob-caption">The single most likely price at ${moveDate || 'expiry'} is <strong>${fmtMoney(price)}</strong> — the same as today, because a no-move outcome is the market's best guess. The curve's width shows how far it could actually go: <strong>50%</strong> chance it lands between ${fmtMoney(bands.p50.lo)} and ${fmtMoney(bands.p50.hi)}, <strong>90%</strong> chance between ${fmtMoney(bands.p90.lo)} and ${fmtMoney(bands.p90.hi)}. Hover the curve for any price.</div>`;
+  }
+
+  // date selector — default date (30-DTE) labelled as "Monthly"
+  if (expirations.length) {
+    const opts = expirations.map(e => {
+      const isMove = e.date === moveDate;
+      const label = isMove ? `Monthly (~${dte != null ? dte + 'd' : '30d'}) — ${e.date}` : e.date;
+      return `<option value="${e.date}"${isMove ? ' selected' : ''}>${label}</option>`;
+    }).join('');
+    html += `<div class="options-date-row"><label>Look at</label><select class="options-expiry" data-symbol="${encodeURIComponent(symbol)}">${opts}</select></div>`;
+  }
+
+  if (sig.sentiment) {
+    html += `<div class="mb-2"><span class="chip ${sentCls}">${sig.sentiment}</span> <span class="caption">as of ${moveDate || ''}${dte != null ? ' · ' + dte + 'd to expiry' : ''}</span></div>`;
+  }
+
+  // raw jargon — behind a collapsed toggle
+  const rawRows = [];
+  if (sig.expectedMove) rawRows.push(`<div><span>Expected move (1σ)</span><span>±${fmtMoney(sig.expectedMove.dollar)} (${sig.expectedMove.percent}%)</span></div>`);
+  rawRows.push(`<div><span>Calls / Puts</span><span>${sig.callsCount} / ${sig.putsCount}</span></div>`);
+  rawRows.push(`<div><span>Put/Call ratio</span><span>${sig.pcRatioVol?.toFixed(3) ?? '—'}</span></div>`);
+  if (sig.maxPain != null) rawRows.push(`<div><span>Max pain</span><span>${fmtMoney(sig.maxPain)}</span></div>`);
+  if (sig.support) rawRows.push(`<div><span>Support level</span><span>${fmtMoney(sig.support.strike)}</span></div>`);
+  if (sig.resistance) rawRows.push(`<div><span>Resistance level</span><span>${fmtMoney(sig.resistance.strike)}</span></div>`);
+  if (sig.avgIV != null) rawRows.push(`<div><span>Avg IV</span><span>${(sig.avgIV * 100).toFixed(1)}%</span></div>`);
+  if (sig.nearMoneyIV != null) rawRows.push(`<div><span>ATM IV</span><span>${(sig.nearMoneyIV * 100).toFixed(1)}%</span></div>`);
+  if (sig.unusual?.length) {
+    rawRows.push(`<div class="grid-full">Unusual volume</div>`);
+    sig.unusual.slice(0, 3).forEach(u => rawRows.push(`<div><span>${u.type} @ ${fmtMoney(u.strike)}</span><span>vol ${fmtNum(u.vol)} · OI ${fmtNum(u.oi)}</span></div>`));
+  }
+  if (rawRows.length) {
+    html += `<details class="raw-details"><summary>Details for the curious</summary><div class="signal-grid mt-2">${rawRows.join('')}</div></details>`;
+  }
+
+  html += '</div>';
+  return html;
+}
+
+// Bell-curve probability distribution centered on today's price.
+function drawProbabilityDistribution(canvas) {
+  if (!canvas) return;
+  const price = parseFloat(canvas.dataset.price);
+  const sigma = parseFloat(canvas.dataset.sigma);
+  if (!(price > 0) || !(sigma > 0)) return;
+
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth || 320;
+  const h = 150;
+  canvas.width = w * dpr;
+  canvas.height = h * dpr;
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, w, h);
+
+  const pad = { top: 30, right: 12, bottom: 30, left: 12 };
+  const plotW = w - pad.left - pad.right;
+  const plotH = h - pad.top - pad.bottom;
+
+  const lo = price - 4 * sigma;
+  const hi = price + 4 * sigma;
+  const xOf = (v) => pad.left + ((v - lo) / (hi - lo)) * plotW;
+  const norm = (v) => (1 / (sigma * Math.sqrt(2 * Math.PI))) * Math.exp(-((v - price) ** 2) / (2 * sigma * sigma));
+  const maxY = norm(price);
+  const yOf = (v) => pad.top + plotH - (norm(v) / maxY) * plotH;
+  const baseY = pad.top + plotH;
+
+  function shade(a, b, color) {
+    ctx.beginPath();
+    ctx.moveTo(xOf(a), baseY);
+    for (let v = a; v <= b; v += (b - a) / 40) ctx.lineTo(xOf(v), yOf(v));
+    ctx.lineTo(xOf(b), baseY);
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.fill();
+  }
+
+  // shaded bands
+  shade(price - 1.645 * sigma, price + 1.645 * sigma, 'rgba(96,165,250,0.18)');
+  shade(price - 0.674 * sigma, price + 0.674 * sigma, 'rgba(96,165,250,0.34)');
+
+  // full curve fill + stroke
+  ctx.beginPath();
+  ctx.moveTo(xOf(lo), baseY);
+  for (let v = lo; v <= hi; v += (hi - lo) / 120) ctx.lineTo(xOf(v), yOf(v));
+  ctx.lineTo(xOf(hi), baseY);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(96,165,250,0.08)';
+  ctx.fill();
+  ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#60a5fa';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // center line
+  ctx.strokeStyle = 'rgba(148,163,184,0.5)';
+  ctx.setLineDash([3, 3]);
+  ctx.beginPath();
+  ctx.moveTo(xOf(price), pad.top);
+  ctx.lineTo(xOf(price), baseY);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // labels
+  const muted = getComputedStyle(document.documentElement).getPropertyValue('--muted').trim();
+  ctx.textAlign = 'center';
+
+  // peak marker — most likely price (= today's price; single best guess = no move)
+  const peakX = xOf(price);
+  const peakY = yOf(price);
+  ctx.fillStyle = muted;
+  ctx.font = '600 10px -apple-system, sans-serif';
+  ctx.fillText('Most likely', peakX, pad.top - 2);
+  ctx.fillText(fmtMoney(price), peakX, pad.top + 10);
+  ctx.beginPath();
+  ctx.arc(peakX, peakY, 3, 0, Math.PI * 2);
+  ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#60a5fa';
+  ctx.fill();
+
+  // band edge labels along the baseline
+  ctx.fillStyle = muted;
+  ctx.font = '10px -apple-system, sans-serif';
+  const edgeLabels = [
+    { z: 0.674, label: '50%' },
+    { z: 0.842, label: '60%' },
+    { z: 1.036, label: '70%' },
+    { z: 1.282, label: '80%' },
+    { z: 1.645, label: '90%' },
+  ];
+  edgeLabels.forEach(({ z, label }) => {
+    ctx.fillText(label, xOf(price - z * sigma), baseY + 14);
+    ctx.fillText(label, xOf(price + z * sigma), baseY + 14);
+  });
+
+  // hover: show price at cursor + chance of landing inside ±|that z| band
+  if (!canvas.dataset.hoverBound) {
+    canvas.dataset.hoverBound = '1';
+    const tip = document.createElement('div');
+    tip.className = 'prob-tooltip';
+    const graph = canvas.closest('.prob-graph');
+    graph.appendChild(tip);
+
+    canvas.addEventListener('mousemove', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const v = lo + ((e.clientX - rect.left - pad.left) / plotW) * (hi - lo);
+      const z = Math.abs(v - price) / sigma;
+      const pct = Math.min(99, Math.round(erf(z / Math.SQRT2) * 100));
+      tip.textContent = `${fmtMoney(v)} · ±${pct}% chance`;
+      const x = Math.min(Math.max(e.clientX - rect.left - tip.offsetWidth / 2, 2), rect.width - tip.offsetWidth - 2);
+      tip.style.left = x + 'px';
+      tip.style.top = Math.max(e.clientY - rect.top - tip.offsetHeight - 8, 2) + 'px';
+      tip.classList.add('show');
+      canvas.style.cursor = 'crosshair';
+    });
+    canvas.addEventListener('mouseleave', () => {
+      tip.classList.remove('show');
+      canvas.style.cursor = '';
+    });
+  }
+}
+
+// Standard normal CDF via erf (Abramowitz-Stegun 7.1.26 approximation).
+function erf(x) {
+  const sign = x < 0 ? -1 : 1;
+  const a = Math.abs(x);
+  const t = 1 / (1 + 0.3275911 * a);
+  const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-a * a);
+  return sign * y;
 }
 
 function ownershipContent(s) {
-  let html = '';
+  const blocks = [];
 
   // insider trades
   if (s.insiderAvailable && s.insiderTrades?.length) {
@@ -400,38 +747,35 @@ function ownershipContent(s) {
       const cls = t.code === 'P' ? 'up' : t.code === 'S' ? 'down' : '';
       return `<tr><td>${t.date || '—'}</td><td>${t.insider || '—'}</td><td class="${cls}">${t.code || '—'}</td><td>${t.shares != null ? fmtNum(t.shares) : '—'}</td><td>${t.total != null ? fmtMoney(t.total) : '—'}</td></tr>`;
     }).join('');
-    html += `<div class="muted" style="font-size:12px;margin-bottom:8px;"><span class="${netCls}">${netLabel}</span> · ${trades.length} transaction(s)</div>`;
-    html += `<div class="table-wrap"><table class="insider-table"><thead><tr><th>Date</th><th>Insider</th><th>Code</th><th>Shares</th><th>Value</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    blocks.push(`
+      <div class="caption mb-2"><span class="${netCls}">${netLabel}</span> · ${trades.length} transaction(s)</div>
+      <div class="table-wrap"><table class="insider-table"><thead><tr><th>Date</th><th>Insider</th><th>Code</th><th>Shares</th><th>Value</th></tr></thead><tbody>${rows}</tbody></table></div>`);
   }
 
   // leadership
   if (s.leadership?.available && s.leadership.changes?.length) {
-    html += html ? '<div style="margin-top:16px;">' : '';
-    html += `<h4 style="margin-bottom:4px;">Leadership Changes</h4>`;
     const changes = s.leadership.changes.map(c => {
       const names = (c.names || []).join(', ') || '—';
-      return `<div style="padding:6px 0;border-bottom:1px solid var(--border);font-size:13px;"><span class="muted">${c.date || ''}</span> ${c.kind || ''} · ${names}</div>`;
+      return `<div class="lead-row"><span class="muted">${c.date || ''}</span> ${c.kind || ''} · ${names}</div>`;
     }).join('');
-    html += changes;
-    if (html.endsWith('<div style="margin-top:16px;">')) html += '</div>';
+    blocks.push(`<h4 class="sub-tight">Leadership Changes</h4>${changes}`);
   }
 
   // hiring
   if (s.hiring?.available) {
     const h = s.hiring;
-    html += html ? '<div style="margin-top:16px;">' : '';
-    html += `<h4 style="margin-bottom:4px;">Hiring</h4>`;
-    html += `<div class="signal-grid"><div><span>Open jobs</span><span>${h.openJobs}</span></div>`;
-    if (h.earliestOpening) html += `<div><span>Earliest</span><span>${h.earliestOpening}</span></div>`;
-    html += '</div>';
-    if (html.endsWith('<div style="margin-top:16px;">')) html += '</div>';
+    let grid = `<div class="signal-grid"><div><span>Open jobs</span><span>${h.openJobs}</span></div>`;
+    if (h.earliestOpening) grid += `<div><span>Earliest</span><span>${h.earliestOpening}</span></div>`;
+    grid += '</div>';
+    blocks.push(`<h4 class="sub-tight">Hiring</h4>${grid}`);
   }
 
-  return html || '<p class="muted" style="font-size:13px;">No ownership or leadership data available.</p>';
+  if (!blocks.length) return '<p class="muted">No ownership or leadership data available.</p>';
+  return blocks.map((b, i) => i ? `<div class="mt-4">${b}</div>` : b).join('');
 }
 
 function newsContent(d) {
-  if (!d.news?.length) return '<p class="muted" style="font-size:13px;">No headlines available.</p>';
+  if (!d.news?.length) return '<p class="muted">No headlines available.</p>';
   const items = d.news.slice(0, 6).map(n =>
     `<li><a href="${n.link}" target="_blank" rel="noopener">${n.title}</a>${n.pubDate ? ` <span class="date">${new Date(n.pubDate).toLocaleDateString()}</span>` : ''}</li>`
   ).join('');
@@ -440,14 +784,14 @@ function newsContent(d) {
 
 // ---------- main renderers ----------
 function renderDetailFast(c, d, symbol) {
-  c.innerHTML = heroHtml(d, '') + chartHtml(d) + newsHtml(d);
+  c.innerHTML = heroHtml(d, '') + chartHtml(d);
   drawChart(d.chart, '1Y');
 
   // init section accordion (story)
   const story = document.createElement('div');
   story.className = 'story-sections';
   story.id = 'story-sections';
-  story.innerHTML = '<div class="story-section open" data-section="verdict"><button class="story-toggle" aria-expanded="true"><span>Verdict</span><span class="chevron">▸</span></button><div class="story-body"><p class="muted" style="font-size:13px;">Loading signals…</p></div></div>';
+  story.innerHTML = '<div class="story-section open" data-section="verdict"><button class="story-toggle" aria-expanded="true"><span>Verdict</span><span class="chevron">' + ICONS.chevron + '</span></button><div class="story-body"><p class="muted">Loading signals…</p></div></div>';
   c.appendChild(story);
 
   // attach chart range handlers
@@ -465,26 +809,20 @@ function renderSignals(c, d, s) {
 
   // build all section content
   const sections = [
-    { id: 'verdict', title: 'Verdict', content: verdictContent(s), open: true },
-    { id: 'why', title: 'Why', content: whyContent(s), open: false },
-    { id: 'fundamentals', title: 'Fundamentals', content: fundamentalsContent(s), open: false },
-    { id: 'analysts', title: 'Analysts', content: analystsContent(s), open: false },
-    { id: 'trading', title: 'Trading', content: tradingContent(s), open: false },
+    { id: 'business', title: 'The Business', content: businessContent(d, s), open: true },
+    { id: 'quality', title: 'Quality', content: qualityContent(s), open: false },
+    { id: 'growth', title: 'Growth', content: growthContent(s), open: false },
+    { id: 'price', title: 'Price vs Value', content: priceContent(d, s), open: false },
     { id: 'ownership', title: 'Ownership', content: ownershipContent(s), open: false },
-    { id: 'news', title: 'News', content: newsHtml(d), open: false },
+    { id: 'watchouts', title: 'Watch-outs', content: watchoutsContent(d, s), open: false },
+    { id: 'news', title: 'News', content: newsContent(d), open: false },
+    { id: 'noise', title: 'Market noise (short-term)', content: marketNoiseContent(s, d.symbol), open: false },
   ].filter(sec => sec.content.trim() !== '');
 
-  // update hero with score
+  // always-visible verdict strip (dial + factors + Quality-vs-Noise + narrative)
   const heroEl = c.querySelector('.detail-hero');
-  if (heroEl && s.score) {
-    const heroRight = heroEl.querySelector('.detail-hero-right');
-    if (heroRight) {
-      const copyBtn = copyVerdictHtml(d, s);
-      const narrativeHtml = narrativeBreathHtml(s);
-      heroRight.insertAdjacentHTML('afterend',
-        `<div style="margin-top:12px;">${copyBtn}</div><div style="margin-top:8px;">${narrativeHtml}</div>`
-      );
-    }
+  if (heroEl && !c.querySelector('.verdict-strip')) {
+    heroEl.insertAdjacentHTML('afterend', verdictStripHtml(d, s));
   }
 
   // render sections
@@ -495,26 +833,46 @@ function renderSignals(c, d, s) {
     btn.addEventListener('click', () => {
       const section = btn.closest('.story-section');
       const isOpen = section.classList.contains('open');
-      if (!isOpen) story.querySelectorAll('.story-section').forEach(s => s.classList.remove('open'));
+      if (!isOpen) story.querySelectorAll('.story-section').forEach(x => x.classList.remove('open'));
       section.classList.toggle('open', !isOpen);
       btn.setAttribute('aria-expanded', !isOpen);
+      if (!isOpen) {
+        const cv = section.querySelector('.prob-dist-canvas');
+        if (cv) requestAnimationFrame(() => drawProbabilityDistribution(cv));
+      }
     });
   });
 
   // copy verdict
-  story.querySelectorAll('.copy-btn').forEach(btn => {
+  c.querySelectorAll('.copy-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const text = decodeURIComponent(btn.dataset.copy);
       navigator.clipboard.writeText(text).then(() => {
         btn.classList.add('copied');
-        btn.textContent = '✓ Copied';
-        setTimeout(() => { btn.classList.remove('copied'); btn.textContent = '⧉ Copy verdict'; }, 2000);
+        btn.innerHTML = '✓ Copied';
+        setTimeout(() => { btn.classList.remove('copied'); btn.innerHTML = ICONS.copy + ' Copy verdict'; }, 2000);
       });
     });
   });
 
+  // persona switcher — swap narrative text without a network call
+  c.querySelectorAll('.persona-pill').forEach(pill => {
+    pill.addEventListener('click', () => {
+      const row = pill.closest('.persona-row');
+      const breathEl = pill.closest('.narrative-breath');
+      if (row) row.querySelectorAll('.persona-pill').forEach(p => p.classList.remove('active'));
+      pill.classList.add('active');
+      if (breathEl) {
+        const textEl = breathEl.querySelector('.breath-text');
+        textEl.textContent = decodeURIComponent(pill.dataset.full);
+        const more = breathEl.querySelector('.more');
+        if (more) more.remove();
+      }
+    });
+  });
+
   // read more
-  story.querySelectorAll('.more').forEach(btn => {
+  c.querySelectorAll('.more').forEach(btn => {
     btn.addEventListener('click', () => {
       const full = decodeURIComponent(btn.dataset.full);
       const breathEl = btn.closest('.narrative-breath');
@@ -524,6 +882,84 @@ function renderSignals(c, d, s) {
       }
     });
   });
+
+  // sticky section nav
+  initDetailNav(c);
+}
+
+// Sticky jump-pill nav that follows the accordion; scroll-spies via IntersectionObserver.
+function initDetailNav(c) {
+  const story = $('#story-sections');
+  if (!story) return;
+  const sections = [...story.querySelectorAll('.story-section')];
+  if (!sections.length) return;
+  if (c.querySelector('.detail-nav')) return;
+
+  const nav = document.createElement('div');
+  nav.className = 'detail-nav';
+
+  const items = sections.map(sec => {
+    const titleEl = sec.querySelector('.story-toggle span');
+    const title = titleEl ? titleEl.textContent.trim() : (sec.dataset.section || '');
+    const pill = document.createElement('button');
+    pill.className = 'detail-nav-pill';
+    pill.dataset.target = sec.dataset.section;
+    pill.textContent = title;
+    pill.addEventListener('click', () => {
+      sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      if (!sec.classList.contains('open')) {
+        story.querySelectorAll('.story-section').forEach(x => x.classList.remove('open'));
+        sec.classList.add('open');
+        const btn = sec.querySelector('.story-toggle');
+        if (btn) btn.setAttribute('aria-expanded', 'true');
+        const cv = sec.querySelector('.prob-dist-canvas');
+        if (cv) requestAnimationFrame(() => drawProbabilityDistribution(cv));
+      }
+    });
+    nav.appendChild(pill);
+    return { pill, sec };
+  });
+
+  story.before(nav);
+
+  if ('IntersectionObserver' in window) {
+    const spy = new IntersectionObserver((entries) => {
+      entries.forEach(en => {
+        if (en.isIntersecting) items.forEach(({ pill, sec }) => pill.classList.toggle('active', sec === en.target));
+      });
+    }, { rootMargin: '-35% 0px -55% 0px' });
+    items.forEach(({ sec }) => spy.observe(sec));
+  }
+}
+
+// ---------- recently viewed (localStorage) ----------
+function recordRecent(symbol) {
+  try {
+    const rec = JSON.parse(localStorage.getItem('if_recent') || '[]');
+    const next = [symbol, ...rec.filter(s => s !== symbol)].slice(0, 6);
+    localStorage.setItem('if_recent', JSON.stringify(next));
+  } catch { /* ignore quota/security errors */ }
+  renderRecent();
+}
+
+function renderRecent() {
+  const wrap = $('#recent-wrap');
+  const list = $('#recent-list');
+  if (!wrap || !list) return;
+  let rec = [];
+  try { rec = JSON.parse(localStorage.getItem('if_recent') || '[]'); } catch { rec = []; }
+  if (!rec.length) { wrap.style.display = 'none'; return; }
+  wrap.style.display = '';
+  list.innerHTML = '';
+  rec.forEach(sym => {
+    const el = document.createElement('div');
+    el.className = 'mini-row';
+    el.innerHTML =
+      `<div><div class="sym">${sym}</div></div>` +
+      `<div class="meta num text-right">view report</div>`;
+    el.addEventListener('click', () => openDetail(sym));
+    list.appendChild(el);
+  });
 }
 
 // ---------- overview ----------
@@ -532,7 +968,7 @@ function miniRow(q) {
   el.className = 'mini-row';
   el.innerHTML =
     `<div><div class="sym">${q.symbol}</div><div class="meta">${q.name || ''}</div></div>` +
-    `<div style="text-align:right"><div class="chg ${chgClass(q.changePercent)}">${fmtPct(q.changePercent)}</div>` +
+    `<div class="text-right"><div class="chg ${chgClass(q.changePercent)}">${fmtPct(q.changePercent)}</div>` +
     `<div class="meta num">${fmtMoney(q.price)}</div></div>`;
   el.addEventListener('click', () => openDetail(q.symbol));
   return el;
@@ -543,7 +979,7 @@ function cryptoRow(c) {
   el.className = 'mini-row';
   el.innerHTML =
     `<div><div class="sym">${c.symbol}</div><div class="meta">${c.name || ''}</div></div>` +
-    `<div style="text-align:right"><div class="chg ${chgClass(c.change24h)}">${fmtPct(c.change24h)}</div>` +
+    `<div class="text-right"><div class="chg ${chgClass(c.change24h)}">${fmtPct(c.change24h)}</div>` +
     `<div class="meta num">${fmtMoney(c.price)}</div></div>`;
   return el;
 }
@@ -578,7 +1014,7 @@ function fill(id, list) {
   if (!root) return;
   root.innerHTML = '';
   if (!list || !list.length) {
-    root.innerHTML = '<div class="muted" style="font-size:13px;padding:8px;">No data.</div>';
+    root.innerHTML = '<p class="muted caption" style="padding:var(--space-2);">No data.</p>';
     return;
   }
   list.forEach((q) => root.appendChild(miniRow(q)));
@@ -720,27 +1156,57 @@ async function runScreener(preset) {
 }
 
 // ---------- crypto ----------
+// CoinGecko is CORS-open (Access-Control-Allow-Origin: *), so when the server
+// proxy is degraded/rate-limited the browser can fetch it directly as a fallback.
+async function fetchCryptoDirect() {
+  const url =
+    'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd' +
+    '&order=market_cap_desc&per_page=50&page=1&price_change_percentage=24h';
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const data = await res.json();
+  return data.map((c) => ({
+    id: c.id,
+    symbol: (c.symbol || '').toUpperCase(),
+    name: c.name,
+    image: c.image,
+    price: c.current_price,
+    marketCap: c.market_cap,
+    volume: c.total_volume,
+    change24h: c.price_change_percentage_24h,
+  }));
+}
+
 async function loadCrypto() {
   const status = $('#crypto-status');
   if (!status) return;
   status.textContent = 'Loading crypto…';
+  let d;
   try {
-    const d = await getJSON('/api/crypto?limit=50');
-    if (d.degraded) status.className = 'status warn';
-    status.textContent = d.degraded ? 'CoinGecko unavailable: ' + (d.error || '') : `${d.count} coins.`;
-    const tbody = $('#crypto-table tbody');
-    tbody.innerHTML = '';
-    (d.results || []).forEach((c, i) => {
-      const tr = document.createElement('tr');
-      tr.innerHTML =
-        `<td>${i + 1}</td><td>${c.name}</td><td>${c.symbol}</td><td class="num">${fmtMoney(c.price)}</td>` +
-        `<td class="${chgClass(c.change24h)} num">${fmtPct(c.change24h)}</td><td class="num">${fmtCap(c.marketCap)}</td><td class="num">${fmtCap(c.volume)}</td>`;
-      tbody.appendChild(tr);
-    });
+    d = await getJSON('/api/crypto?limit=50');
   } catch (e) {
-    status.className = 'status warn';
-    status.textContent = 'Crypto error: ' + e.message;
+    d = { count: 0, results: [], degraded: true, error: e.message };
   }
+  let direct = false;
+  if (d.degraded && d.clientFallback) {
+    try {
+      const results = await fetchCryptoDirect();
+      if (results.length) { d = { count: results.length, results, degraded: false }; direct = true; }
+    } catch { /* both paths failed */ }
+  }
+  if (d.degraded) status.className = 'status warn';
+  status.textContent = d.degraded
+    ? 'CoinGecko unavailable: ' + (d.error || 'unknown error')
+    : `${d.count} coins.` + (direct ? ' (direct)' : '');
+  const tbody = $('#crypto-table tbody');
+  tbody.innerHTML = '';
+  (d.results || []).forEach((c, i) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      `<td>${i + 1}</td><td>${c.name}</td><td>${c.symbol}</td><td class="num">${fmtMoney(c.price)}</td>` +
+      `<td class="${chgClass(c.change24h)} num">${fmtPct(c.change24h)}</td><td class="num">${fmtCap(c.marketCap)}</td><td class="num">${fmtCap(c.volume)}</td>`;
+    tbody.appendChild(tr);
+  });
 }
 
 // ---------- F&G strip ----------
@@ -884,6 +1350,7 @@ function showDetail() {
 async function openDetail(symbol, pushState) {
   if (pushState !== false) history.pushState({ symbol }, '', '/s/' + symbol);
   showDetail();
+  recordRecent(symbol);
   const c = $('#detail-content');
   c.innerHTML = '<div style="padding:48px 0;"><div class="skeleton skeleton-line w60"></div><div class="skeleton skeleton-line w80"></div><div class="skeleton skeleton-block"></div></div>';
 
@@ -924,7 +1391,41 @@ $$('.tab').forEach((btn) => {
 });
 
 // ---------- boot ----------
+// Delegated handler: options expiry date selector (one-time, survives re-renders)
+document.addEventListener('change', async (e) => {
+  const sel = e.target.closest('.options-expiry');
+  if (!sel) return;
+  const symbol = decodeURIComponent(sel.dataset.symbol);
+  const value = sel.value;
+  const block = sel.closest('.options-block');
+  sel.disabled = true;
+  if (block) {
+    const prev = block.querySelector('.prob-rows, .prob-graph');
+    if (prev) prev.style.opacity = '0.4';
+  }
+  try {
+    const q = value ? '?expiry=' + encodeURIComponent(value) : '';
+    const data = await getJSON('/api/options/' + encodeURIComponent(symbol) + q);
+    if (!data.available || !data.signals) throw new Error('no options data');
+    const optsObj = { currentPrice: data.currentPrice, expirations: data.expirations, signals: data.signals, available: true };
+    if (block) block.innerHTML = optionsBlockHtml(optsObj, symbol);
+    requestAnimationFrame(() => drawProbabilityDistribution(block ? block.querySelector('.prob-dist-canvas') : null));
+  } catch (err) {
+    if (block) block.innerHTML = '<p class="muted caption" style="padding:var(--space-2) 0;">Could not load options for this date.</p>';
+  }
+});
+
+// recently-viewed clear
+const recentClearBtn = $('#recent-clear');
+if (recentClearBtn) {
+  recentClearBtn.addEventListener('click', () => {
+    try { localStorage.removeItem('if_recent'); } catch { /* ignore */ }
+    renderRecent();
+  });
+}
+
 (function boot() {
+  renderRecent();
   const sym = parseSymbolFromPath();
   if (sym) {
     openDetail(sym, false);

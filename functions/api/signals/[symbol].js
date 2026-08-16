@@ -20,14 +20,21 @@ function withTimeout(promise, ms) {
   ]);
 }
 
-// --- Verdict scoring ---
-const SCORE_WEIGHTS = {
-  analyst: 0.25,
-  fundamentals: 0.20,
-  insider: 0.20,
-  news: 0.15,
-  options: 0.10,
-  retail: 0.10,
+// --- Verdict scoring (two lenses) ---
+// Quality = long-term business lens (analyst, fundamentals, insider, growth).
+// Market pulse = short-term noise lens (options, retail, news) — surfaced only
+// as context inside the "Market noise" section, never in the verdict.
+const QUALITY_WEIGHTS = {
+  analyst: 0.30,
+  fundamentals: 0.25,
+  insider: 0.25,
+  growth: 0.20,
+};
+
+const MARKET_WEIGHTS = {
+  options: 0.30,
+  retail: 0.35,
+  news: 0.35,
 };
 
 function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
@@ -70,10 +77,13 @@ function scoreInsider(s) {
   return clamp(Math.round(ratio * 80), -100, 100);
 }
 
-function scoreNews(n) {
-  if (!n?.available) return null;
-  const sent = n.avgSentiment || 0;
-  return clamp(Math.round(sent * 100), -100, 100);
+function scoreGrowth(v) {
+  // Earnings estimate growth is the single best forward-looking growth proxy.
+  let s = 0;
+  if (v?.epsGrowthPct != null) s += clamp(v.epsGrowthPct * 3, -60, 60);
+  if (v?.beatStreak != null && v.beatStreak > 0) s += Math.min(v.beatStreak * 8, 30);
+  if (s === 0) return null;
+  return clamp(Math.round(s), -100, 100);
 }
 
 function scoreOptions(o) {
@@ -89,9 +99,69 @@ function scoreRetail(r) {
   return clamp(Math.round((r.bullPct - r.bearPct) * 1.5), -100, 100);
 }
 
-function computeScore(result) {
+function scoreNews(n) {
+  if (!n?.available) return null;
+  const sent = n.avgSentiment || 0;
+  return clamp(Math.round(sent * 100), -100, 100);
+}
+
+function computeComposite(factors, weights) {
+  if (!factors.length) return null;
+  const totalWeight = factors.reduce((s, f) => s + f.weight, 0);
+  const raw = factors.reduce((s, f) => s + f.score * f.weight, 0) / totalWeight;
+  return Math.round(raw);
+}
+
+function gradeFor(value) {
+  if (value >= 30) return 'bullish';
+  if (value >= 10) return 'leaning_bullish';
+  if (value > -10) return 'neutral';
+  if (value > -30) return 'leaning_bearish';
+  return 'bearish';
+}
+
+// Value-investor metrics from the fundamentals quoteSummary payload.
+function computeValueMetrics(f) {
+  if (!f) return null;
+  const price = f.price;
+  const mcap = f.marketCap;
+  const out = {};
+
+  // Owner earnings (Buffett): FCF yield + cash conversion.
+  if (f.freeCashflow != null && mcap > 0) out.fcfYield = +((f.freeCashflow / mcap) * 100).toFixed(2);
+  if (f.freeCashflow != null && f.netIncome != null) {
+    out.fcfConversion = f.freeCashflow / f.netIncome;
+  }
+
+  // PEG (Lynch): forward P/E ÷ forward EPS growth.
+  if (f.forwardPe != null && f.epsGrowthPct != null && f.epsGrowthPct > 0) {
+    out.peg = +(f.forwardPe / f.epsGrowthPct).toFixed(2);
+  }
+
+  // Earnings yield (Graham): 1 ÷ trailing P/E.
+  if (f.pe != null && f.pe > 0) out.earningsYield = +((1 / f.pe) * 100).toFixed(2);
+
+  // Graham fair value: EPS × (8.5 + 2g), where g = expected growth %.
+  if (f.price != null && f.pe != null && f.pe > 0 && f.epsGrowthPct != null) {
+    const eps = f.price / f.pe;
+    const g = clamp(f.epsGrowthPct, 0, 35);
+    out.grahamFairValue = +(eps * (8.5 + 2 * g)).toFixed(2);
+  }
+
+  // Leverage & balance-sheet sanity (Graham/Buffett).
+  if (f.debtToEquity != null) out.debtToEquity = f.debtToEquity;
+  if (f.currentRatio != null) out.currentRatio = f.currentRatio;
+  if (f.returnOnEquity != null) out.roe = f.returnOnEquity;
+  if (f.returnOnAssets != null) out.roa = f.returnOnAssets;
+  if (f.grossMargins != null) out.grossMargin = f.grossMargins;
+  if (f.profitMargins != null) out.profitMargin = f.profitMargins;
+
+  return Object.keys(out).length ? out : null;
+}
+
+function computeScore(result, value) {
   const factors = [];
-  const weights = SCORE_WEIGHTS;
+  const weights = QUALITY_WEIGHTS;
 
   const a = scoreAnalyst(result.analyst);
   if (a != null) factors.push({ key: 'analyst', label: 'Analyst', score: a, weight: weights.analyst });
@@ -102,8 +172,22 @@ function computeScore(result) {
   const i = scoreInsider(result);
   if (i != null) factors.push({ key: 'insider', label: 'Insider', score: i, weight: weights.insider });
 
-  const n = scoreNews(result.newsIntel);
-  if (n != null) factors.push({ key: 'news', label: 'News', score: n, weight: weights.news });
+  const g = scoreGrowth(value);
+  if (g != null) factors.push({ key: 'growth', label: 'Growth', score: g, weight: weights.growth });
+
+  if (factors.length === 0) {
+    return { value: 0, label: 'No data', grade: 'neutral', factors: [], weights };
+  }
+
+  const valueScore = computeComposite(factors, weights);
+  const grade = gradeFor(valueScore);
+  return { value: valueScore, label: grade, grade, factors, weights };
+}
+
+// Market pulse lens: short-term noise shown as context only.
+function computeMarketPulse(result) {
+  const factors = [];
+  const weights = MARKET_WEIGHTS;
 
   const o = scoreOptions(result.options);
   if (o != null) factors.push({ key: 'options', label: 'Options', score: o, weight: weights.options });
@@ -111,63 +195,80 @@ function computeScore(result) {
   const r = scoreRetail(result.retail);
   if (r != null) factors.push({ key: 'retail', label: 'Retail', score: r, weight: weights.retail });
 
-  if (factors.length === 0) {
-    return { value: 0, label: 'No data', grade: 'neutral', factors: [], weights };
-  }
+  const n = scoreNews(result.newsIntel);
+  if (n != null) factors.push({ key: 'news', label: 'News', score: n, weight: weights.news });
 
-  const totalWeight = factors.reduce((s, f) => s + f.weight, 0);
-  const raw = factors.reduce((s, f) => s + f.score * f.weight, 0) / totalWeight;
-  const value = Math.round(raw);
-
-  let grade;
-  if (value >= 30) grade = 'bullish';
-  else if (value >= 10) grade = 'leaning_bullish';
-  else if (value > -10) grade = 'neutral';
-  else if (value > -30) grade = 'leaning_bearish';
-  else grade = 'bearish';
-
-  return { value, label: grade, grade, factors, weights };
+  if (!factors.length) return null;
+  return {
+    value: computeComposite(factors, weights),
+    grade: gradeFor(computeComposite(factors, weights)),
+    factors,
+    weights,
+  };
 }
 
-// Call Mistral to write a plain-English summary from the collected signals.
+// Call Mistral to write a plain-English summary in a value-investor frame
+// (Buffett/Lynch): what the business is, quality, growth, price, owners, risks.
 async function mistralNarrative(symbol, companyName, signals, env) {
   const apiKey = env?.MISTRAL_API_KEY || env?.mistralApiKey;
   if (!apiKey) return null;
 
   const parts = [];
+  const v = signals.value;
+  const s = signals.score;
+  if (s?.grade) parts.push(`Composite quality score: ${s.value} (${s.grade.replace(/_/g, ' ')})`);
   if (signals.analyst?.available) {
     const a = signals.analyst;
-    parts.push(`Analyst consensus: ${a.analystConsensus || 'N/A'}, target mean $${a.targetMean ?? 'N/A'}, ${a.numAnalysts ?? 0} analysts`);
+    parts.push(`Analyst consensus: ${a.consensus || 'N/A'}, target mean $${a.targetMean ?? 'N/A'}, upside ${a.upsidePct ?? 'N/A'}% (${a.numAnalysts ?? 0} analysts)`);
+  }
+  if (v) {
+    const bits = [];
+    if (v.roe != null) bits.push(`ROE ${(v.roe * 100).toFixed(1)}%`);
+    if (v.fcfYield != null) bits.push(`free-cash-flow yield ${v.fcfYield}%`);
+    if (v.peg != null) bits.push(`PEG ${v.peg}`);
+    if (v.debtToEquity != null) bits.push(`debt/equity ${(v.debtToEquity).toFixed(2)}`);
+    if (v.grahamFairValue != null && signals.price) bits.push(`Graham fair value $${v.grahamFairValue} vs price $${signals.price}`);
+    if (bits.length) parts.push(`Quality/valuation metrics: ${bits.join(', ')}`);
+  }
+  if (signals.xbrl?.available) {
+    parts.push(`Fundamentals trend: Revenue ${signals.xbrl.revenue?.trendLabel || 'N/A'}, Net income ${signals.xbrl.netIncome?.trendLabel || 'N/A'}`);
   }
   if (signals.earnings?.available) {
     const e = signals.earnings;
-    parts.push(`Next earnings: ${e.nextEarningsDate || 'N/A'}, beat streak ${e.beatStreak ?? 0} quarters`);
+    parts.push(`Next earnings: ${e.nextDate || 'N/A'}, beat streak ${e.beatStreak ?? 0} quarters`);
+  }
+  if (signals.dividends?.available) {
+    parts.push(`Dividend yield ${signals.dividends.yield != null ? (signals.dividends.yield * 100).toFixed(2) + '%' : 'N/A'}`);
   }
   if (signals.shortInterest?.available) {
-    const s = signals.shortInterest;
-    parts.push(`Short interest: ${s.shortPercentOfFloat != null ? (s.shortPercentOfFloat * 100).toFixed(1) : 'N/A'}% of float, days to cover ${s.shortRatio ?? 'N/A'}`);
-  }
-  if (signals.retail?.available) {
-    parts.push(`Retail sentiment: ${signals.retail.bullPct ?? 0}% bullish / ${signals.retail.bearPct ?? 0}% bearish`);
-  }
-  if (signals.newsIntel?.available) {
-    parts.push(`News sentiment: ${signals.newsIntel.avgSentiment > 0.2 ? 'positive' : signals.newsIntel.avgSentiment < -0.2 ? 'negative' : 'neutral'} (${signals.newsIntel.count} articles)`);
+    const si = signals.shortInterest;
+    parts.push(`Short interest: ${si.shortPercentOfFloat != null ? (si.shortPercentOfFloat * 100).toFixed(1) : 'N/A'}% of float`);
   }
   if (signals.insiderAvailable) {
     const buys = (signals.insiderTrades || []).filter(t => t.code === 'P').length;
     const sells = (signals.insiderTrades || []).filter(t => t.code === 'S').length;
     parts.push(`Insider trades: ${buys} buys, ${sells} sells`);
   }
-  if (signals.options?.available) {
-    parts.push(`Options sentiment: ${signals.options.signals?.sentiment || 'N/A'}`);
+  if (signals.marketPulse) {
+    parts.push(`Short-term market pulse (noise, not a value signal): score ${signals.marketPulse.value} (${(signals.marketPulse.grade || '').replace(/_/g, ' ')})`);
   }
-  if (signals.xbrl?.available) {
-    parts.push(`Fundamentals trend: Revenue ${signals.xbrl.revenue?.trendLabel || 'N/A'}, Net income ${signals.xbrl.netIncome?.trendLabel || 'N/A'}`);
-  }
+  if (signals.signalFlags?.redFlag) parts.push(`Red flag: recent officer departures alongside insider selling`);
 
   if (parts.length === 0) return null;
 
-  const prompt = `You are a financial analyst writing for a non-expert investor. Based on the following data points for ${symbol} (${companyName || symbol}), write a 3-5 sentence plain-English summary of what's going on with this stock right now. Highlight the most important positives and negatives. End with a one-sentence overall take. Be factual, not speculative. No investment advice disclaimers needed.
+  // One call returns a neutral overview + takes from 6 legendary investors.
+  const prompt = `You are a panel of legendary investors reviewing ${symbol} (${companyName || symbol}) for a non-expert. Based on the data below, write a short take for each investor in their own voice and mindset. Each take must be 2-4 sentences, plain-English, factual, and must reflect that investor's actual philosophy (not generic advice). End each take with a one-sentence verdict.
+
+Investors and their lenses:
+- summary: a neutral, balanced plain-English overview answering: what the business is, quality, growth, whether the price is fair, and risks.
+- buffett (Warren Buffett): moat, owner earnings / free cash flow, management quality, would he own it for 10 years, margin of safety.
+- munger (Charlie Munger): inversion ("what could kill this?"), incentives, psychology, mispricing, avoiding stupidity.
+- graham (Benjamin Graham): margin of safety, cheap on earnings/assets, balance-sheet strength, defensive vs enterprising.
+- lynch (Peter Lynch): can you explain the story to your grandmother, PEG / growth at a reasonable price, what could make it a 10-bagger.
+- fisher (Philip Fisher): quality of the business and its management, R&D and long-term growth, scuttlebutt, patience.
+- templeton (John Templeton): contrarian value, bargains where others won't look, point of maximum pessimism, long-term global view.
+
+Return ONLY a JSON object with exactly these keys, each value a string: summary, buffett, munger, graham, lynch, fisher, templeton. No markdown, no commentary.
 
 Data:
 ${parts.join('\n')}`;
@@ -179,17 +280,42 @@ ${parts.join('\n')}`;
       body: JSON.stringify({
         model: 'mistral-medium-latest',
         messages: [
-          { role: 'system', content: 'You write concise, factual, layman-friendly stock summaries. 3-5 sentences max.' },
+          { role: 'system', content: 'You are a panel of the greatest investors in history. You reply in strict JSON only, with short plain-English takes for a non-expert. No markdown.' },
           { role: 'user', content: prompt },
         ],
-        temperature: 0.3,
-        max_tokens: 300,
+        temperature: 0.4,
+        max_tokens: 1100,
+        response_format: { type: 'json_object' },
       }),
     });
     const body = await res.json();
-    const text = body?.choices?.[0]?.message?.content || null;
-    if (!text) return null;
-    return { available: true, text: text.trim() };
+    const raw = body?.choices?.[0]?.message?.content || null;
+    if (!raw) return null;
+
+    let parsed = null;
+    try {
+      parsed = JSON.parse(raw.trim());
+    } catch {
+      const m = raw.match(/\{[\s\S]*\}/);
+      if (m) { try { parsed = JSON.parse(m[0]); } catch { parsed = null; } }
+    }
+    if (!parsed || typeof parsed !== 'object') return null;
+
+    const keys = ['summary', 'buffett', 'munger', 'graham', 'lynch', 'fisher', 'templeton'];
+    const personas = {};
+    let summary = null;
+    for (const k of keys) {
+      const txt = typeof parsed[k] === 'string' ? parsed[k].trim() : '';
+      if (txt) {
+        if (k === 'summary') summary = txt;
+        else personas[k] = txt;
+      }
+    }
+    if (!summary && Object.keys(personas).length) {
+      summary = personas.buffett || personas.munger || Object.values(personas)[0];
+    }
+    if (!summary) return null;
+    return { available: true, text: summary, personas };
   } catch {
     return null;
   }
@@ -209,6 +335,7 @@ export async function onRequest(context) {
     const quotes = await getQuotes([symbol]);
     quote = quotes[0] || null;
     companyName = quote?.name || '';
+    if (quote?.price != null) result.price = quote.price;
   } catch { /* not critical */ }
 
   // All signal sources run concurrently with per-source timeouts.
@@ -234,12 +361,12 @@ export async function onRequest(context) {
         const cboe = await getCboeOptionChain(symbol);
         if (cboe) {
           const chain = { expirations: cboe.expirations, chain: cboe.chain };
-          return computeOptionSignals(chain, cboe.currentPrice || quote?.price);
+          return { signals: computeOptionSignals(chain, cboe.currentPrice || quote?.price), expirations: cboe.expirations };
         }
       } catch { /* CBOE failed */ }
       try {
         const chain = await getOptionChain(symbol);
-        return computeOptionSignals(chain, quote?.price);
+        return { signals: computeOptionSignals(chain, quote?.price), expirations: chain?.expirations || [] };
       } catch { /* Yahoo also failed */ }
       return null;
     })(), TIMEOUTS.options),
@@ -291,12 +418,19 @@ export async function onRequest(context) {
   }
 
   // --- Options ---
-  if (optionsR.status === 'fulfilled' && optionsR.value) {
+  if (optionsR.status === 'fulfilled' && optionsR.value && optionsR.value.signals) {
+    const expirations = (optionsR.value.expirations || []).map(epoch => ({
+      date: new Date(epoch * 1000).toISOString().split('T')[0],
+      epoch,
+    }));
+    const nearestEpoch = expirations.length ? Math.min(...expirations.map(e => e.epoch)) : null;
     result.options = {
       available: true,
       currentPrice: quote?.price || null,
-      nearestExpiry: optionsR.value.expiryDate || null,
-      signals: optionsR.value,
+      nearestExpiry: nearestEpoch ? new Date(nearestEpoch * 1000).toISOString().split('T')[0] : null,
+      moveExpiry: optionsR.value.signals.expiryDate || null,
+      expirations,
+      signals: optionsR.value.signals,
     };
   } else {
     result.options = { available: false, reason: 'unavailable' };
@@ -304,8 +438,10 @@ export async function onRequest(context) {
   }
 
   // --- Analyst / earnings / dividends / short-interest ---
+  let fundamentalsRaw = null;
   if (analystR.status === 'fulfilled' && analystR.value) {
     const f = analystR.value;
+    fundamentalsRaw = f;
     result.analyst = {
       available: true,
       consensus: f.analystConsensus || null,
@@ -385,8 +521,11 @@ export async function onRequest(context) {
   }
   result.signalFlags = signalFlags;
 
-  // --- Verdict score (weighted composite, server-side) ---
-  result.score = computeScore(result);
+  // --- Verdict score (two lenses, server-side) ---
+  const value = computeValueMetrics(fundamentalsRaw);
+  result.value = value;
+  result.score = computeScore(result, value);
+  result.marketPulse = computeMarketPulse(result);
 
   // --- Mistral narrative (runs after all signals, uses aggregated data) ---
   try {

@@ -475,8 +475,8 @@ export async function getOptionChainLimited(symbol, signal = null) {
     const chain = [];
     for (const expiry of expirations) {
       if (!want.has(expiry)) continue;
-      const built = `${baseCacheKey}?expiration=${expiry}&crumb=${encodeURIComponent(session.crumb)}`;
-      const key = `${baseCacheKey}?expiration=${expiry}`;
+      const built = `${baseCacheKey}?date=${expiry}&crumb=${encodeURIComponent(session.crumb)}`;
+      const key = `${baseCacheKey}?date=${expiry}`;
       const { data: d2 } = await cachedJson(built, 1800, headers, key, signal);
       const res = d2?.optionChain?.result?.[0];
       if (!res) continue;
@@ -497,6 +497,64 @@ export async function getOptionChainLimited(symbol, signal = null) {
       if (chain.length === want.size) break;
     }
     if (!chain.length) return null;
+    return { expirations, chain };
+  } catch {
+    return null;
+  }
+}
+
+// Lazy single-expiry fetch for the options page. Given an expiry date string
+// ("YYYY-MM-DD"), resolve it to the closest available expiration (tiny list
+// call), then fetch only that expiry's chain (small payload, no getAllData).
+// Returns the same { expirations, chain } shape as getOptionChain, so the
+// dropdown still lists every available date.
+export async function getOptionChainForExpiry(symbol, dateStr, signal = null) {
+  const session = await getSession();
+  const headers = { 'User-Agent': UA['User-Agent'], Accept: '*/*', Cookie: session.cookie };
+  const baseCacheKey =
+    `${YH}/v7/finance/options/${encodeURIComponent(symbol)}`;
+  try {
+    // 1) Tiny expiration-list call (cached) to resolve the requested date.
+    const built1 = `${baseCacheKey}?crumb=${encodeURIComponent(session.crumb)}`;
+    const { data: d1 } = await cachedJson(built1, 1800, headers, baseCacheKey, signal);
+    const result1 = d1?.optionChain?.result?.[0];
+    if (!result1) return null;
+    const expirations = result1.expirationDates || [];
+    if (!expirations.length) return null;
+
+    // 2) Resolve date → closest epoch.
+    const dateToEpoch = (d) => d && /^\d{4}-\d{2}-\d{2}$/.test(d)
+      ? Math.floor(new Date(d + 'T00:00:00Z').getTime() / 1000)
+      : null;
+    let requestedEpoch = dateToEpoch(dateStr);
+    if (requestedEpoch == null) requestedEpoch = expirations[0];
+    if (!expirations.includes(requestedEpoch)) {
+      requestedEpoch = expirations.reduce((best, e) =>
+        (!best || Math.abs(e - requestedEpoch) < Math.abs(best - requestedEpoch) ? e : best), null);
+    }
+    if (requestedEpoch == null) return null;
+
+    // 3) Fetch just that one expiry.
+    const built = `${baseCacheKey}?date=${requestedEpoch}&crumb=${encodeURIComponent(session.crumb)}`;
+    const key = `${baseCacheKey}?date=${requestedEpoch}`;
+    const { data } = await cachedJson(built, 1800, headers, key, signal);
+    const result = data?.optionChain?.result?.[0];
+    if (!result) return null;
+    const o = (result.options || [])[0];
+    if (!o) return null;
+    const chain = [{
+      expiry: o?.expirationDate ?? requestedEpoch,
+      calls: (o?.calls || []).map(c => ({
+        symbol: c.contractSymbol, strike: c.strike, bid: c.bid, ask: c.ask,
+        last: c.lastPrice, vol: c.volume, oi: c.openInterest,
+        iv: c.impliedVolatility, itm: c.inTheMoney, _type: 'call',
+      })),
+      puts: (o?.puts || []).map(p => ({
+        symbol: p.contractSymbol, strike: p.strike, bid: p.bid, ask: p.ask,
+        last: p.lastPrice, vol: p.volume, oi: p.openInterest,
+        iv: p.impliedVolatility, itm: p.inTheMoney, _type: 'put',
+      })),
+    }];
     return { expirations, chain };
   } catch {
     return null;

@@ -555,7 +555,7 @@ async function handleSignals(context) {
 
   // --- Mistral narrative (runs after all signals, uses aggregated data) ---
   try {
-    const narrative = await withTimeout(mistralNarrative(symbol, companyName, result, context.env), 3500);
+    const narrative = await withTimeout(mistralNarrative(symbol, companyName, result, context.env), 5000);
     result.narrative = narrative || { available: false, reason: 'unavailable' };
   } catch {
     result.narrative = { available: false, reason: 'error' };

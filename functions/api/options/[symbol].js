@@ -2,7 +2,7 @@
 // Tries Yahoo first, falls back to CBOE. Returns option signals
 // (put/call ratios, unusual activity, max pain, IV).
 
-import { getOptionChain, computeOptionSignals, getQuotes } from '../../_lib/yahoo.js';
+import { getOptionChainLimited, getOptionChainForExpiry, computeOptionSignals, getQuotes } from '../../_lib/yahoo.js';
 import { getCboeOptionChain } from '../../_lib/cboe.js';
 import { json, corsPreflight } from '../../_lib/http.js';
 
@@ -22,11 +22,15 @@ export async function onRequest(context) {
     currentPrice = quotes[0]?.price || null;
   } catch { /* not critical */ }
 
-  // Try Yahoo first
+  // Try Yahoo first. Lazy by design: default fetches only nearest + ~30-DTE;
+  // an explicit expiry fetches just that one. The full expiration list is
+  // always included so the dropdown shows every available date.
   let chain = null;
   let source = 'yahoo';
   try {
-    chain = await getOptionChain(symbol);
+    chain = requestedDate
+      ? await getOptionChainForExpiry(symbol, requestedDate)
+      : await getOptionChainLimited(symbol);
   } catch { /* fall through to CBOE */ }
 
   // Fall back to CBOE
@@ -50,7 +54,9 @@ export async function onRequest(context) {
     }, { headers: { 'Cache-Control': 's-maxage=600' } });
   }
 
-  // Resolve requested expiry to a chain epoch (closest match if not exact)
+  // Resolve requested expiry to a chain epoch (closest match if not exact).
+  // The lazy single-expiry path already resolved it, but CBOE fallback keeps
+  // the full chain so the closest-match logic still applies there.
   const dateToEpoch = (d) => d && /^\d{4}-\d{2}-\d{2}$/.test(d)
     ? Math.floor(new Date(d + 'T00:00:00Z').getTime() / 1000)
     : null;
@@ -64,13 +70,14 @@ export async function onRequest(context) {
   }
 
   const signals = computeOptionSignals(chain, currentPrice, { expiryEpoch: requestedEpoch });
-  const nearestExpiryEpoch = chain.chain?.[0]?.expiry;
-  const nearestExpiry = nearestExpiryEpoch ? new Date(nearestExpiryEpoch * 1000).toISOString().split('T')[0] : null;
 
   const expirations = (chain.expirations || []).map(epoch => ({
     date: new Date(epoch * 1000).toISOString().split('T')[0],
     epoch,
   }));
+  const nearestExpiry = expirations.length
+    ? expirations.reduce((a, b) => (b.epoch < a.epoch ? b : a)).date
+    : null;
 
   return json({
     symbol,

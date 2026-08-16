@@ -569,10 +569,14 @@ async function handleSignals(request, params) {
   });
 }
 
+export async function OPTIONS() {
+  return corsPreflight();
+}
+
 // Top-level guard: never let an unhandled throw surface as a 500. If anything
 // unexpectedly blows up we still return 200 with a degraded partial payload so
 // the client never shows a blank "no signals" state.
-export default async function handler(request, { params }) {
+export async function GET(request, { params }) {
   try {
     return await handleSignals(request, params);
   } catch (err) {

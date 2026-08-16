@@ -1,8 +1,11 @@
 import { getQuotes, getFundamentalsBatch, getChart, getNews } from '../../lib/yahoo.js';
 import { json, corsPreflight } from '../../lib/http.js';
 
-export default async function handler(request, { params }) {
-  if (request.method === 'OPTIONS') return corsPreflight();
+export async function OPTIONS() {
+  return corsPreflight();
+}
+
+export async function GET(request, { params }) {
   const symbol = (params.symbol || '').toUpperCase();
   if (!symbol) return json({ error: 'symbol required' }, { status: 400 });
 

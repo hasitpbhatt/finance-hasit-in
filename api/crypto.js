@@ -1,8 +1,11 @@
 import { getCrypto } from '../lib/crypto.js';
 import { json, corsPreflight } from '../lib/http.js';
 
-export default async function handler(request) {
-  if (request.method === 'OPTIONS') return corsPreflight();
+export async function OPTIONS() {
+  return corsPreflight();
+}
+
+export async function GET(request) {
   const url = new URL(request.url);
   const perPage = Math.min(Math.max(parseInt(url.searchParams.get('limit')) || 50, 1), 100);
 

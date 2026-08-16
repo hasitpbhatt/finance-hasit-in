@@ -11,8 +11,11 @@ function topMovers(list, dir, n = 5) {
   return withChange.slice(0, n);
 }
 
-export default async function handler(request) {
-  if (request.method === 'OPTIONS') return corsPreflight();
+export async function OPTIONS() {
+  return corsPreflight();
+}
+
+export async function GET(request) {
 
   const result = {
     updatedAt: Date.now(),

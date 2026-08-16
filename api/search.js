@@ -2,8 +2,11 @@ import { searchSymbols } from '../lib/yahoo.js';
 import { UNIVERSE } from '../lib/universe.js';
 import { json, corsPreflight } from '../lib/http.js';
 
-export default async function handler(request) {
-  if (request.method === 'OPTIONS') return corsPreflight();
+export async function OPTIONS() {
+  return corsPreflight();
+}
+
+export async function GET(request) {
   const url = new URL(request.url);
   const q = (url.searchParams.get('q') || '').trim();
 

@@ -37,8 +37,11 @@ function parseNlToParams(nl) {
   return out;
 }
 
-export default async function handler(request) {
-  if (request.method === 'OPTIONS') return corsPreflight();
+export async function OPTIONS() {
+  return corsPreflight();
+}
+
+export async function GET(request) {
   const url = new URL(request.url);
   const p = url.searchParams;
 

@@ -1,23 +1,24 @@
-// Vercel API route: /s/AAPL — serves the SPA shell with the symbol pre-set.
-// Dynamic og:title / og:description for share cards.
+// Vercel API route: /s/AAPL — serves the SPA shell with the symbol pre-set so
+// the client can render the detail view on first paint (no extra round-trip).
+// Includes dynamic og:title / og:description for share cards.
 
 const SYMBOL_RE = /^[A-Z]{1,6}$/;
 
-export default async function handler(request, { params }) {
+export async function GET(request, { params }) {
   const raw = (params.symbol || '').toUpperCase();
   if (!SYMBOL_RE.test(raw)) {
     return new Response('Not found', { status: 404, headers: { 'Content-Type': 'text/plain' } });
   }
 
-  const html = <!DOCTYPE html>
+  const html = `<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title> — Investment Finder</title>
-    <meta name="description" content="Free investment research for . Analyst ratings, insider trades, options, fundamentals, and AI summary." />
-    <meta property="og:title" content=" — Investment Finder" />
-    <meta property="og:description" content="Free investment research for . Analyst ratings, insider trades, options, fundamentals, and AI summary." />
+    <title>${raw} — Investment Finder</title>
+    <meta name="description" content="Free investment research for ${raw}. Analyst ratings, insider trades, options, fundamentals, and AI summary." />
+    <meta property="og:title" content="${raw} — Investment Finder" />
+    <meta property="og:description" content="Free investment research for ${raw}. Analyst ratings, insider trades, options, fundamentals, and AI summary." />
     <meta property="og:type" content="website" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
@@ -54,10 +55,10 @@ export default async function handler(request, { params }) {
       <p>Data: Yahoo Finance, SEC EDGAR, CoinGecko, StockTwits (free, no key). For educational use only — not investment advice.</p>
     </footer>
 
-    <script>window.__INITIAL_SYMBOL__ = "";</script>
+    <script>window.__INITIAL_SYMBOL__ = "${raw}";</script>
     <script src="/app.js"></script>
   </body>
-</html>;
+</html>`;
 
   return new Response(html, {
     status: 200,

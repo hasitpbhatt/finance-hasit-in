@@ -5,8 +5,9 @@ export async function OPTIONS() {
   return corsPreflight();
 }
 
-export async function GET(request, { params }) {
-  const symbol = (params.symbol || '').toUpperCase();
+export async function GET(request) {
+  const url = new URL(request.url);
+  const symbol = (url.pathname.split('/').pop() || '').toUpperCase();
   if (!symbol) return json({ error: 'symbol required' }, { status: 400 });
 
   const result = { symbol, degraded: false, errors: [] };

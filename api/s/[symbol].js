@@ -4,8 +4,9 @@
 
 const SYMBOL_RE = /^[A-Z]{1,6}$/;
 
-export async function GET(request, { params }) {
-  const raw = (params.symbol || '').toUpperCase();
+export async function GET(request) {
+  const url = new URL(request.url);
+  const raw = (url.pathname.split('/').pop() || '').toUpperCase();
   if (!SYMBOL_RE.test(raw)) {
     return new Response('Not found', { status: 404, headers: { 'Content-Type': 'text/plain' } });
   }

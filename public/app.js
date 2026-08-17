@@ -167,6 +167,28 @@ function marginOfSafetyHtml(s) {
 }
 
 function verdictStripHtml(d, s) {
+  if (!s || !s.score) {
+    return `
+    <div class="verdict-strip" data-lens="${currentLens()}">
+      <div class="verdict-top">
+        <div id="verdict-dial">
+          <div class="score-dial score-dial-none">
+            <div class="score-dial-grade">Not enough data</div>
+            <div class="score-dial-meta">Signals are loading or unavailable for this symbol.</div>
+          </div>
+        </div>
+        <div class="verdict-narrative">
+          <p class="verdict-plain" id="verdict-plain">We’re still gathering the fundamentals for ${d?.symbol || ''}. Chart and news are available now; verdict will appear once signals are ready.</p>
+          <div id="quality-vs-noise"></div>
+        </div>
+        <div class="verdict-actions">
+          ${copyVerdictHtml(d, s)}
+        </div>
+      </div>
+      ${lensSwitchHtml()}
+      <div class="caption disclaimer">Research context, not a trade trigger. The verdict blends fundamentals only; options &amp; retail flow are shown separately as risk.</div>
+    </div>`;
+  }
   const flag = s.signalFlags?.redFlag
     ? '<div class="flag-banner">⚠ Red flag: officer departures + insider selling</div>'
     : '';
@@ -1196,7 +1218,9 @@ function renderSignals(c, d, s) {
   const chartZone = c.querySelector('#detail-chart-zone');
   const heroEl = c.querySelector('.detail-hero');
   const anchor = chartZone || heroEl;
-  if (anchor && !c.querySelector('.verdict-strip')) {
+  // Remove stale verdict strip to guarantee deterministic rendering per navigation
+  c.querySelector('.verdict-strip')?.remove();
+  if (anchor) {
     anchor.insertAdjacentHTML('afterend', verdictStripHtml(d, s));
   }
 
@@ -2332,8 +2356,17 @@ async function openDetail(symbol, pushState) {
     if (!signalsData) throw new Error('sources slow');
     renderSignals(c, detailData, signalsData);
   } catch (e) {
+    // Render a degraded verdict strip so the page stays deterministic
+    renderSignals(c, detailData, null);
     const story = $('#story-sections');
-    if (story) story.innerHTML = '<p class="muted" style="padding:16px;font-size:13px;">Signals are taking longer than usual — try again in a minute.</p>';
+    if (story) {
+      const existing = story.querySelector('#story-content');
+      if (existing) {
+        existing.insertAdjacentHTML('beforebegin', '<p class="muted" style="padding:16px;font-size:13px;">Signals are taking longer than usual — verdict shown with limited data. Try again in a minute.</p>');
+      } else {
+        story.innerHTML = '<p class="muted" style="padding:16px;font-size:13px;">Signals are taking longer than usual — try again in a minute.</p>';
+      }
+    }
   }
 
   document.title = `${symbol} — Investable`;

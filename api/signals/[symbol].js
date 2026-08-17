@@ -33,8 +33,8 @@ function withTimeout(promise, ms, signal) {
 // Market pulse = short-term noise lens (options, retail, news) — surfaced only
 // as context inside the "Market noise" section, never in the verdict.
 const QUALITY_WEIGHTS = {
-  analyst: 0.30,
-  fundamentals: 0.25,
+  analyst: 0.20,
+  fundamentals: 0.35,
   insider: 0.25,
   growth: 0.20,
 };
@@ -51,10 +51,11 @@ function scoreAnalyst(a) {
   if (!a?.available) return null;
   let s = 0;
   const c = (a.consensus || '').toLowerCase();
-  if (c.includes('strong_buy') || c === 'buy') s += 40;
+  if (c.includes('strong_buy') || c === 'buy') s += 25;
   else if (c === 'hold') s += 0;
   else if (c.includes('sell')) s -= 30;
-  if (a.upsidePct != null) s += clamp(a.upsidePct * 2, -30, 50);
+  // Symmetric upside clamp: sell-side targets can be wrong in either direction.
+  if (a.upsidePct != null) s += clamp(a.upsidePct * 2, -50, 50);
   if (a.numAnalysts != null) s += Math.min(a.numAnalysts / 10, 10);
   return clamp(Math.round(s), -100, 100);
 }
@@ -115,16 +116,20 @@ function scoreNews(n) {
 
 function computeComposite(factors, weights) {
   if (!factors.length) return null;
-  const totalWeight = factors.reduce((s, f) => s + f.weight, 0);
-  const raw = factors.reduce((s, f) => s + f.score * f.weight, 0) / totalWeight;
-  return Math.round(raw);
+  // Denominator is the FIXED total weight of every lens component, not just the
+  // factors present. Missing (null) bearish-capable signals are treated as 0,
+  // so they dilute the composite instead of vanishing from the denominator and
+  // letting a single bullish factor dominate.
+  const totalWeight = Object.values(weights).reduce((s, w) => s + w, 0);
+  const earned = factors.reduce((s, f) => s + f.score * f.weight, 0);
+  return Math.round(earned / totalWeight);
 }
 
 function gradeFor(value) {
-  if (value >= 30) return 'bullish';
-  if (value >= 10) return 'leaning_bullish';
-  if (value > -10) return 'neutral';
-  if (value > -30) return 'leaning_bearish';
+  if (value >= 45) return 'bullish';
+  if (value >= 20) return 'leaning_bullish';
+  if (value > -20) return 'neutral';
+  if (value > -45) return 'leaning_bearish';
   return 'bearish';
 }
 
@@ -167,6 +172,22 @@ function computeValueMetrics(f) {
   return Object.keys(out).length ? out : null;
 }
 
+// Margin of safety (Graham): how far today's price sits below an intrinsic-value
+// estimate. Returns null when there's no estimate to compare against.
+function computeMarginOfSafety(value, price) {
+  if (!value || price == null || price <= 0) return null;
+  if (value.grahamFairValue == null) return null;
+  const mosPct = +(((value.grahamFairValue - price) / price) * 100).toFixed(1);
+  const state = mosPct >= 20 ? 'cheap' : mosPct <= -20 ? 'expensive' : 'fair';
+  return {
+    fairValue: value.grahamFairValue,
+    mosPct,
+    state,
+    fcfYield: value.fcfYield != null ? value.fcfYield : null,
+    earningsYield: value.earningsYield != null ? value.earningsYield : null,
+  };
+}
+
 function computeScore(result, value) {
   const factors = [];
   const weights = QUALITY_WEIGHTS;
@@ -184,12 +205,15 @@ function computeScore(result, value) {
   if (g != null) factors.push({ key: 'growth', label: 'Growth', score: g, weight: weights.growth });
 
   if (factors.length === 0) {
-    return { value: 0, label: 'No data', grade: 'neutral', factors: [], weights };
+    return { value: 0, label: 'No data', grade: 'neutral', factors: [], weights, coverage: 0 };
   }
 
   const valueScore = computeComposite(factors, weights);
   const grade = gradeFor(valueScore);
-  return { value: valueScore, label: grade, grade, factors, weights };
+  // coverage = share of the fixed total weight that actually had data, so users
+  // can see thin-data vs strong-data verdicts (missing signals now dilute, not vanish).
+  const coverage = +factors.reduce((s, f) => s + f.weight, 0).toFixed(2);
+  return { value: valueScore, label: grade, grade, factors, weights, coverage };
 }
 
 // Market pulse lens: short-term noise shown as context only.
@@ -552,6 +576,7 @@ async function handleSignals(request, params) {
   result.value = value;
   result.score = computeScore(result, value);
   result.marketPulse = computeMarketPulse(result);
+  result.marginOfSafety = computeMarginOfSafety(value, result.price);
 
   // --- Mistral narrative (runs after all signals, uses aggregated data) ---
   try {

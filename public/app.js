@@ -61,7 +61,17 @@ const ICONS = {
 // ---------- score dial (radial 0–100 arc) ----------
 function scoreDialHtml(score) {
   if (!score) return '';
+  const factors = score.factors || [];
+  if (!factors.length) {
+    // No data — never paint a +0 as though it were a real verdict.
+    return `
+      <div class="score-dial score-dial-none">
+        <div class="score-dial-grade">Not enough data</div>
+        <div class="score-dial-meta">Fewer signals than we'd like to judge.</div>
+      </div>`;
+  }
   const v = score.value;
+  const thin = factors.length < 2; // low confidence → de-emphasize the dial
   const pct = Math.round(((v + 100) / 200) * 100);
   const dialCls = v >= 30 ? 'up' : v >= -30 ? 'mid' : 'down';
   const gradeCls = v >= 10 ? 'up' : v > -10 ? 'mid' : 'down';
@@ -72,12 +82,12 @@ function scoreDialHtml(score) {
     <div class="score-dial">
       <svg class="score-dial-svg" viewBox="0 0 120 74" role="img" aria-label="Quality score ${v}">
         <path class="score-dial-track" d="M 14 62 A 46 46 0 0 1 106 62" fill="none"/>
-        <path class="score-dial-fill ${dialCls}" d="M 14 62 A 46 46 0 0 1 106 62" fill="none" stroke-dasharray="${dash.toFixed(2)} ${ARC.toFixed(2)}"/>
+        <path class="score-dial-fill ${dialCls}${thin ? ' thin' : ''}" d="M 14 62 A 46 46 0 0 1 106 62" fill="none" stroke-dasharray="${dash.toFixed(2)} ${ARC.toFixed(2)}"/>
       </svg>
-      <div class="score-dial-value ${gradeCls}">${v > 0 ? '+' : ''}${v}</div>
+      <div class="score-dial-value ${gradeCls}${thin ? ' thin' : ''}">${v > 0 ? '+' : ''}${v}</div>
       <div class="score-dial-grade">${gradeLabel}</div>
     </div>
-    <div class="score-dial-meta">${score.factors.length} signal${score.factors.length !== 1 ? 's' : ''}</div>`;
+    <div class="score-dial-meta">${factors.length} of 4 signal${factors.length !== 1 ? 's' : ''}</div>`;
 }
 
 // Quality-vs-Noise framing: long-term score vs short-term market pulse.
@@ -97,7 +107,58 @@ function qualityVsNoiseHtml(s) {
   return `<div class="quality-vs-noise">${chips.join('')}</div>`;
 }
 
+// One plain-English sentence that interprets the dial for a non-expert, plus a
+// valuation note when we have the data. Traders still get the raw numbers in
+// the sections; this is the "what does it mean" layer.
+function plainVerdictSentence(d, s) {
+  const sc = s.score;
+  if (!sc || !sc.factors?.length) return '';
+  const v = sc.value;
+  let take = '';
+  if (v >= 30) take = 'A solid long-term business based on the signals we have.';
+  else if (v >= 10) take = 'A decent long-term business, with a few caveats.';
+  else if (v > -10) take = 'The long-term signals are mixed — no clear call either way.';
+  else if (v > -30) take = 'Long-term signals look soft. Be careful.';
+  else take = 'Long-term signals look weak. We would be wary here.';
+  const vv = s.value;
+  if (vv?.grahamFairValue != null && d.price != null) {
+    const gap = ((d.price - vv.grahamFairValue) / vv.grahamFairValue) * 100;
+    if (gap <= -15) take += ' It trades below a rough fair value — a margin of safety.';
+    else if (gap <= 15) take += ' The price looks roughly fair.';
+    else take += ' It trades above a rough fair value — little margin of safety.';
+  } else if (!(s.analyst?.targetMean != null && d.price != null)) {
+    take += " We couldn't judge whether the price is fair from the data.";
+  }
+  return take;
+}
+
+// Factor chip tooltips — plain-English gloss for jargon labels (UX: layman
+// understands the factor; traders still get the number).
+const FACTOR_TITLES = {
+  analyst: 'What professional analysts expect — ratings and price targets',
+  fundamentals: 'Revenue and earnings trend from SEC filings',
+  insider: 'What company insiders are doing with their own shares',
+  growth: 'How fast earnings are expected to grow',
+};
+
 // Verdict strip — always-visible summary above the chart.
+// Margin-of-safety band (Graham): where price sits vs an intrinsic-value estimate.
+function marginOfSafetyHtml(s) {
+  const m = s.marginOfSafety;
+  if (!m) return '';
+  const cls = m.state === 'cheap' ? 'up' : m.state === 'expensive' ? 'down' : '';
+  const label = m.state === 'cheap' ? 'Cheap vs fair value' : m.state === 'expensive' ? 'Expensive vs fair value' : 'Around fair value';
+  const pct = Math.max(-50, Math.min(50, m.mosPct));
+  const left = ((pct + 50) / 100) * 100;
+  const price = s.price != null ? fmtMoney(s.price) : '—';
+  return `
+    <div class="mos-band ${cls}">
+      <div class="mos-head"><span>${label}</span><span class="mos-pct">${m.mosPct > 0 ? '+' : ''}${m.mosPct}% vs Graham estimate</span></div>
+      <div class="mos-track"><div class="mos-marker" style="left:${left.toFixed(1)}%"></div></div>
+      <div class="mos-foot caption">Est. fair value ${fmtMoney(m.fairValue)} · price ${price}</div>
+    </div>`;
+}
+
 function verdictStripHtml(d, s) {
   const flag = s.signalFlags?.redFlag
     ? '<div class="flag-banner">⚠ Red flag: officer departures + insider selling</div>'
@@ -106,21 +167,36 @@ function verdictStripHtml(d, s) {
     ? `<div class="score-factors">${s.score.factors.map(f => {
         const cls = f.score > 0 ? 'up' : f.score < 0 ? 'down' : 'mid';
         const label = f.score > 0 ? '+' + f.score : f.score;
-        return `<span class="score-factor"><span class="dot ${cls}"></span>${f.label} ${label}</span>`;
+        const tip = FACTOR_TITLES[f.key] || '';
+        return `<span class="score-factor"${tip ? ` title="${tip}"` : ''}><span class="dot ${cls}"></span>${f.label} ${label}</span>`;
       }).join('')}</div>`
+    : '';
+  const plain = plainVerdictSentence(d, s);
+  const cov = s.score?.coverage;
+  const conf = cov != null && cov < 1
+    ? `<div class="caption confidence-note">Based on ${s.score.factors?.length || 0} of 4 data sources (${Math.round(cov * 100)}% coverage) — treat the score as provisional when coverage is low.</div>`
     : '';
   return `
     <div class="verdict-strip">
       ${flag}
+      <div class="lens-tag investor">Investor lens · long-term</div>
       <div class="verdict-top">
         <div>${scoreDialHtml(s.score)}</div>
         <div class="verdict-narrative">
+          ${plain ? `<p class="verdict-plain">${plain}</p>` : ''}
           ${qualityVsNoiseHtml(s)}
           ${narrativeBreathHtml(s)}
         </div>
         <div class="verdict-copy">${copyVerdictHtml(d, s)}</div>
       </div>
       ${factors}
+      ${marginOfSafetyHtml(s)}
+      ${conf}
+      <div class="horizon-toggle" role="group" aria-label="Time horizon">
+        <button class="horizon-pill active" data-horizon="invest" type="button">Invest (years)</button>
+        <button class="horizon-pill" data-horizon="trade" type="button">Trade (days–weeks)</button>
+      </div>
+      <div class="caption disclaimer">Research context, not a trade trigger. The verdict blends fundamentals only; options &amp; retail flow are shown separately as risk.</div>
     </div>`;
 }
 
@@ -220,13 +296,18 @@ function drawChart(chart, range, indicators) {
   }
 
   // Align SMA overlay arrays to the sliced series by timestamp.
+  // The SMA arrays are computed from the dense 2y daily series. On the ALL
+  // range we draw the quarterly max-history series whose timestamps don't match
+  // the daily array — overlays would render misaligned, so skip them there
+  // (unless max-history fell back to the daily series, in which case they align).
+  const overlaysOn = range !== 'ALL' || !chart?.history || chart.history === chart.series;
   function alignByTime(full, indArray) {
     const byT = new Map();
     for (let i = 0; i < full.length; i++) byT.set(full[i].t, indArray[i]);
     return series.map(p => byT.get(p.t) ?? null);
   }
-  const sma50Full = indicators?.sma50 || null;
-  const sma200Full = indicators?.sma200 || null;
+  const sma50Full = overlaysOn ? indicators?.sma50 || null : null;
+  const sma200Full = overlaysOn ? indicators?.sma200 || null : null;
   const sma50 = sma50Full ? alignByTime(chart.series || [], sma50Full) : null;
   const sma200 = sma200Full ? alignByTime(chart.series || [], sma200Full) : null;
 
@@ -279,7 +360,10 @@ function drawChart(chart, range, indicators) {
     ctx.strokeStyle = strokeColor;
     ctx.lineWidth = 2;
     ctx.lineJoin = 'round';
+    ctx.shadowColor = strokeColor;
+    ctx.shadowBlur = 8;
     ctx.stroke();
+    ctx.shadowBlur = 0;
 
     // SMA overlays (SMA50 = amber, SMA200 = violet), drawn over the same X axis.
     function overlay(arr, color) {
@@ -311,9 +395,12 @@ function drawChart(chart, range, indicators) {
       const lastX = x(totalPts - 1);
       const lastY = y(prices[totalPts - 1]);
       ctx.beginPath();
-      ctx.arc(lastX, lastY, 3, 0, Math.PI * 2);
+      ctx.arc(lastX, lastY, 3.2, 0, Math.PI * 2);
       ctx.fillStyle = strokeColor;
+      ctx.shadowColor = strokeColor;
+      ctx.shadowBlur = 12;
       ctx.fill();
+      ctx.shadowBlur = 0;
     }
 
     if (animate && drawn < totalPts) requestAnimationFrame(frame);
@@ -348,15 +435,18 @@ function chartHtml(d) {
     const rsiLabel = lat.rsi14 != null
       ? (lat.rsi14 >= 70 ? 'overbought' : lat.rsi14 <= 30 ? 'oversold' : 'neutral')
       : '';
+    const rsiTip = lat.rsi14 != null
+      ? (lat.rsi14 >= 70 ? 'RSI 70+ suggests buyers may be exhausted' : lat.rsi14 <= 30 ? 'RSI 30− suggests sellers may be exhausted' : 'RSI near 50 means balanced momentum')
+      : '';
     indHtml = `<div class="chart-indicators">` +
-      (lat.rsi14 != null ? `<span class="chip ${rsiCls}">RSI ${Math.round(lat.rsi14)} ${rsiLabel}</span>` : '') +
-      (lat.sma50 != null ? `<span class="chip">SMA50 ${fmtMoney(lat.sma50)}</span>` : '') +
-      (lat.sma200 != null ? `<span class="chip">SMA200 ${fmtMoney(lat.sma200)}</span>` : '') +
+      (lat.rsi14 != null ? `<span class="chip ${rsiCls}" title="${rsiTip}">RSI ${Math.round(lat.rsi14)} ${rsiLabel}</span>` : '') +
+      (lat.sma50 != null ? `<span class="chip" title="50-day average — the recent trend">SMA50 ${fmtMoney(lat.sma50)}</span>` : '') +
+      (lat.sma200 != null ? `<span class="chip" title="200-day average — the long-term trend">SMA200 ${fmtMoney(lat.sma200)}</span>` : '') +
       `</div>`;
   }
   return `
     <div class="chart-wrap">
-      <canvas id="detail-canvas"></canvas>
+      <canvas id="detail-canvas" role="img" aria-label="Price history chart for ${d.symbol || ''}"></canvas>
       <div class="chart-tooltip"></div>
       ${indHtml}
       <div class="chart-range">
@@ -566,7 +656,7 @@ function watchoutsContent(d, s) {
 
 // Market noise — short-term trading signals, demoted and labeled as noise.
 function marketNoiseContent(s, symbol) {
-  let html = '<div class="noise-note">Short-term market bets and crowd sentiment. Not part of the long-term verdict.</div>';
+  let html = '<div class="noise-note">Trader lens — short-term market bets and crowd sentiment. Not part of the long-term verdict.</div>';
 
   // market pulse score (context only)
   if (s.marketPulse) {
@@ -575,9 +665,19 @@ function marketNoiseContent(s, symbol) {
     html += `<div class="mt-2 mb-2"><span class="caption">Market pulse:</span> <span class="chip ${cls}">${m.value > 0 ? '+' : ''}${m.value}</span> <span class="caption">options + crowd + news, short-term</span></div>`;
   }
 
-  // options — friendly probability view
+  // contrarian flag — extreme crowd positioning has historically been a fade
+  const r = s.retail;
+  const crowdBullish = r?.available && r.bullPct >= 75;
+  const oSig = s.options?.signals;
+  const crowdBearish = r?.available && r.bearPct >= 75;
+  if (crowdBullish || crowdBearish || oSig?.sentiment === 'Bullish' || oSig?.sentiment === 'Bearish') {
+    const lean = crowdBullish || oSig?.sentiment === 'Bullish' ? 'bullish' : 'bearish';
+    html += `<div class="contrarian-note">The crowd is leaning hard <strong>${lean}</strong>. Crowds this one-sided have historically been a <em>fade</em> — treat as risk, not confirmation.</div>`;
+  }
+
+  // options — details only (the bell-curve panel lives at the top of the page)
   if (s.options?.available && s.options.signals?.available) {
-    html += optionsBlockHtml(s.options, symbol);
+    html += optionsDetailsHtml(s.options, symbol);
   }
 
   // short interest
@@ -606,25 +706,31 @@ function marketNoiseContent(s, symbol) {
   return html;
 }
 
-// Friendly options block: probability bands + bell curve, jargon tucked away.
-function optionsBlockHtml(o, symbol) {
+// Probability panel — shown OPEN and FIRST (after verdict strip, before chart).
+// Trader lens: bell curve + honest caption + static legend + expiry selector.
+// Never feeds the long-term verdict.
+function probabilityBlockHtml(o, symbol) {
   const sig = o.signals;
   if (!sig?.available) return '';
   const price = o.currentPrice;
   const bands = sig.probabilityBands;
   const dte = sig.dte;
-  const sentCls = sig.sentiment === 'Bullish' ? 'up' : sig.sentiment === 'Bearish' ? 'down' : '';
-  const expirations = o.expirations || [];
   const moveDate = sig.expiryDate;
+  const expirations = o.expirations || [];
+  if (!(bands && price != null)) return '';
 
-  let html = '<div class="options-block">';
+  const sigma = +(bands.p68.hi - price).toFixed(2);
+  let html = '<div class="options-block prob-panel" id="prob-panel">';
+  html += `<div class="lens-tag trader">Trader lens · probability</div>`;
+  html += `<div class="prob-graph"><canvas class="prob-dist-canvas" data-price="${price}" data-sigma="${sigma}" role="img" aria-label="Probability of price at ${moveDate || 'expiry'}"></canvas></div>`;
+  html += `<div class="prob-caption">The single most likely price at ${moveDate || 'expiry'} is <strong>${fmtMoney(price)}</strong> — the same as today, because a no-move outcome is the market's best guess. The curve shows the market's expected range: <strong>50%</strong> chance it lands between ${fmtMoney(bands.p50.lo)} and ${fmtMoney(bands.p50.hi)}, <strong>90%</strong> chance between ${fmtMoney(bands.p90.lo)} and ${fmtMoney(bands.p90.hi)}. This is a <em>symmetric</em> guess — real prices have fatter tails (bigger surprises than the curve implies).</div>`;
 
-  // sigma bell curve on top
-  if (bands && price != null) {
-    const sigma = +(bands.p68.hi - price).toFixed(2);
-    html += `<div class="prob-graph"><canvas class="prob-dist-canvas" data-price="${price}" data-sigma="${sigma}"></canvas></div>`;
-    html += `<div class="prob-caption">The single most likely price at ${moveDate || 'expiry'} is <strong>${fmtMoney(price)}</strong> — the same as today, because a no-move outcome is the market's best guess. The curve's width shows how far it could actually go: <strong>50%</strong> chance it lands between ${fmtMoney(bands.p50.lo)} and ${fmtMoney(bands.p50.hi)}, <strong>90%</strong> chance between ${fmtMoney(bands.p90.lo)} and ${fmtMoney(bands.p90.hi)}. Hover the curve for any price.</div>`;
-  }
+  // static legend — visible without hovering
+  html += `<div class="prob-legend">`;
+  html += `<span><b>50%</b> ${fmtMoney(bands.p50.lo)}–${fmtMoney(bands.p50.hi)}</span>`;
+  html += `<span><b>68%</b> ${fmtMoney(bands.p68.lo)}–${fmtMoney(bands.p68.hi)}</span>`;
+  html += `<span><b>90%</b> ${fmtMoney(bands.p90.lo)}–${fmtMoney(bands.p90.hi)}</span>`;
+  html += `</div>`;
 
   // date selector — default date (30-DTE) labelled as "Monthly"
   if (expirations.length) {
@@ -636,6 +742,19 @@ function optionsBlockHtml(o, symbol) {
     html += `<div class="options-date-row"><label>Look at</label><select class="options-expiry" data-symbol="${encodeURIComponent(symbol)}">${opts}</select></div>`;
   }
 
+  html += '</div>';
+  return html;
+}
+
+// Options details (sentiment + raw jargon) — Trader lens, inside Market pulse.
+function optionsDetailsHtml(o, symbol) {
+  const sig = o.signals;
+  if (!sig?.available) return '';
+  const dte = sig.dte;
+  const sentCls = sig.sentiment === 'Bullish' ? 'up' : sig.sentiment === 'Bearish' ? 'down' : '';
+  const moveDate = sig.expiryDate;
+
+  let html = '<div class="options-block" id="options-details">';
   if (sig.sentiment) {
     html += `<div class="mb-2"><span class="chip ${sentCls}">${sig.sentiment}</span> <span class="caption">as of ${moveDate || ''}${dte != null ? ' · ' + dte + 'd to expiry' : ''}</span></div>`;
   }
@@ -645,9 +764,12 @@ function optionsBlockHtml(o, symbol) {
   if (sig.expectedMove) rawRows.push(`<div><span>Expected move (1σ)</span><span>±${fmtMoney(sig.expectedMove.dollar)} (${sig.expectedMove.percent}%)</span></div>`);
   rawRows.push(`<div><span>Calls / Puts</span><span>${sig.callsCount} / ${sig.putsCount}</span></div>`);
   rawRows.push(`<div><span>Put/Call ratio</span><span>${sig.pcRatioVol?.toFixed(3) ?? '—'}</span></div>`);
-  if (sig.maxPain != null) rawRows.push(`<div><span>Max pain</span><span>${fmtMoney(sig.maxPain)}</span></div>`);
-  if (sig.support) rawRows.push(`<div><span>Support level</span><span>${fmtMoney(sig.support.strike)}</span></div>`);
-  if (sig.resistance) rawRows.push(`<div><span>Resistance level</span><span>${fmtMoney(sig.resistance.strike)}</span></div>`);
+  if (sig.maxPain != null) {
+    const mpNote = dte != null ? ` · ${dte}d to expiry` : '';
+    rawRows.push(`<div><span>Max pain (expiry magnet)</span><span>${fmtMoney(sig.maxPain)}<span class="caption"> ${mpNote}</span></span></div>`);
+  }
+  if (sig.support) rawRows.push(`<div><span>Support wall (OI)</span><span>${fmtMoney(sig.support.strike)}</span></div>`);
+  if (sig.resistance) rawRows.push(`<div><span>Resistance wall (OI)</span><span>${fmtMoney(sig.resistance.strike)}</span></div>`);
   if (sig.avgIV != null) rawRows.push(`<div><span>Avg IV</span><span>${(sig.avgIV * 100).toFixed(1)}%</span></div>`);
   if (sig.nearMoneyIV != null) rawRows.push(`<div><span>ATM IV</span><span>${(sig.nearMoneyIV * 100).toFixed(1)}%</span></div>`);
   if (sig.unusual?.length) {
@@ -878,13 +1000,22 @@ function renderSignals(c, d, s) {
     { id: 'ownership', title: 'Ownership', content: ownershipContent(s), open: false },
     { id: 'watchouts', title: 'Watch-outs', content: watchoutsContent(d, s), open: false },
     { id: 'news', title: 'News', content: newsContent(d), open: false },
-    { id: 'noise', title: 'Market noise (short-term)', content: marketNoiseContent(s, d.symbol), open: false },
+    { id: 'noise', title: 'Market pulse (short-term) · Trader lens', content: marketNoiseContent(s, d.symbol), open: false },
   ].filter(sec => sec.content.trim() !== '');
 
   // always-visible verdict strip (dial + factors + Quality-vs-Noise + narrative)
   const heroEl = c.querySelector('.detail-hero');
   if (heroEl && !c.querySelector('.verdict-strip')) {
     heroEl.insertAdjacentHTML('afterend', verdictStripHtml(d, s));
+  }
+
+  // probability panel — OPEN and FIRST, right after the verdict strip (before chart)
+  const vstrip = c.querySelector('.verdict-strip');
+  if (vstrip) {
+    const prob = probabilityBlockHtml(s.options, d.symbol, d);
+    if (prob) vstrip.insertAdjacentHTML('afterend', prob);
+    const pc = c.querySelector('#prob-panel .prob-dist-canvas');
+    if (pc) requestAnimationFrame(() => drawProbabilityDistribution(pc));
   }
 
   // render sections
@@ -913,7 +1044,7 @@ function renderSignals(c, d, s) {
         btn.classList.add('copied');
         btn.innerHTML = '✓ Copied';
         setTimeout(() => { btn.classList.remove('copied'); btn.innerHTML = ICONS.copy + ' Copy verdict'; }, 2000);
-      });
+      }).catch(() => { /* clipboard unavailable (e.g. non-secure context) — ignore */ });
     });
   });
 
@@ -947,6 +1078,25 @@ function renderSignals(c, d, s) {
 
   // sticky section nav
   initDetailNav(c);
+
+  // horizon toggle — reshapes which lens is emphasised (never blended)
+  c.querySelectorAll('.horizon-pill').forEach(pill => {
+    pill.addEventListener('click', () => {
+      c.querySelectorAll('.horizon-pill').forEach(p => p.classList.remove('active'));
+      pill.classList.add('active');
+      const horizon = pill.dataset.horizon;
+      const storyEl = c.querySelector('#story-sections');
+      if (!storyEl) return;
+      // open the lens-appropriate first section; collapse the rest
+      const targetId = horizon === 'trade' ? 'noise' : 'business';
+      storyEl.querySelectorAll('.story-section').forEach(sec => {
+        const open = sec.dataset.section === targetId;
+        sec.classList.toggle('open', open);
+        const btn = sec.querySelector('.story-toggle');
+        if (btn) btn.setAttribute('aria-expanded', open);
+      });
+    });
+  });
 }
 
 // Sticky jump-pill nav that follows the accordion; scroll-spies via IntersectionObserver.
@@ -1046,10 +1196,30 @@ function cryptoRow(c) {
   return el;
 }
 
+function skelMiniRows(n) {
+  let h = '';
+  for (let i = 0; i < n; i++) {
+    h += '<div class="mini-row"><div class="skeleton skeleton-line" style="width:52px;height:12px;"></div><div class="skeleton skeleton-line" style="width:74px;height:12px;"></div></div>';
+  }
+  return h;
+}
+function skelTable(n, cols) {
+  let h = '';
+  for (let i = 0; i < n; i++) {
+    h += '<tr>' + Array.from({ length: cols }).map(() => '<td><span class="skeleton skeleton-line" style="display:inline-block;width:62%;height:12px;"></span></td>').join('') + '</tr>';
+  }
+  return h;
+}
+
 async function loadOverview() {
   const status = $('#overview-status');
   if (!status) return;
   status.textContent = 'Loading market overview…';
+  status.classList.add('loading');
+  ['ov-stock-gainers', 'ov-stock-losers', 'ov-etf-gainers', 'ov-etf-losers', 'ov-crypto'].forEach(id => {
+    const r = document.getElementById(id);
+    if (r) r.innerHTML = skelMiniRows(5);
+  });
   try {
     const d = await getJSON('/api/overview');
     if (d.degraded) status.className = 'status warn';
@@ -1065,9 +1235,11 @@ async function loadOverview() {
       cr.innerHTML = '';
       (d.crypto || []).forEach((c) => cr.appendChild(cryptoRow(c)));
     }
+    status.classList.remove('loading');
   } catch (e) {
     status.className = 'status warn';
     status.textContent = 'Failed to load overview: ' + e.message;
+    status.classList.remove('loading');
   }
 }
 
@@ -1164,6 +1336,9 @@ function parseNaturalLanguage(q) {
 async function runScreener(preset) {
   const status = $('#screener-status');
   status.textContent = 'Searching…';
+  status.classList.add('loading');
+  const stb = document.querySelector('#screener-table tbody');
+  if (stb) stb.innerHTML = skelTable(10, 8);
   const params = new URLSearchParams();
 
   if (preset && PRESETS[preset]) {
@@ -1196,6 +1371,7 @@ async function runScreener(preset) {
     const d = await getJSON('/api/screener?' + params.toString());
     const tbody = $('#screener-table tbody');
     tbody.innerHTML = '';
+    status.classList.remove('loading');
     if (d.degraded) status.className = 'status warn';
     status.textContent = d.degraded
       ? 'Source unavailable: ' + (d.error || 'unknown error')
@@ -1214,6 +1390,7 @@ async function runScreener(preset) {
   } catch (e) {
     status.className = 'status warn';
     status.textContent = 'Screener error: ' + e.message;
+    status.classList.remove('loading');
   }
 }
 
@@ -1243,6 +1420,9 @@ async function loadCrypto() {
   const status = $('#crypto-status');
   if (!status) return;
   status.textContent = 'Loading crypto…';
+  status.classList.add('loading');
+  const ctb = document.querySelector('#crypto-table tbody');
+  if (ctb) ctb.innerHTML = skelTable(8, 7);
   let d;
   try {
     d = await getJSON('/api/crypto?limit=50');
@@ -1260,6 +1440,7 @@ async function loadCrypto() {
   status.textContent = d.degraded
     ? 'CoinGecko unavailable: ' + (d.error || 'unknown error')
     : `${d.count} coins.` + (direct ? ' (direct)' : '');
+  status.classList.remove('loading');
   const tbody = $('#crypto-table tbody');
   tbody.innerHTML = '';
   (d.results || []).forEach((c, i) => {
@@ -1333,13 +1514,21 @@ async function loadFgStrip() {
       try {
         const d = await getJSON('/api/search?q=' + encodeURIComponent(q));
         gsr.innerHTML = '';
-        if (d.degraded || !d.results.length) { hideResults(); return; }
+        if (d.degraded) { hideResults(); return; }
+        if (!d.results.length) {
+          const empty = document.createElement('div');
+          empty.className = 'search-empty';
+          empty.textContent = `No matches for “${q}”.`;
+          gsr.appendChild(empty);
+          gsr.classList.remove('hidden');
+          return;
+        }
         const curated = d.results.filter((r) => r.inUniverse);
         const wider = d.results.filter((r) => !r.inUniverse);
         if (curated.length) {
           const hdr = document.createElement('div');
           hdr.className = 'search-section-header';
-          hdr.textContent = 'Curated';
+          hdr.textContent = 'In our list';
           gsr.appendChild(hdr);
           curated.slice(0, 5).forEach((r) => gsr.appendChild(addItem(r, q)));
         }
@@ -1479,21 +1668,24 @@ document.addEventListener('change', async (e) => {
   if (!sel) return;
   const symbol = decodeURIComponent(sel.dataset.symbol);
   const value = sel.value;
-  const block = sel.closest('.options-block');
+  const probPanel = document.getElementById('prob-panel');
+  const details = document.getElementById('options-details');
   sel.disabled = true;
-  if (block) {
-    const prev = block.querySelector('.prob-rows, .prob-graph');
-    if (prev) prev.style.opacity = '0.4';
-  }
+  if (probPanel) probPanel.style.opacity = '0.4';
+  if (details) details.style.opacity = '0.4';
   try {
     const q = value ? '?expiry=' + encodeURIComponent(value) : '';
     const data = await getJSON('/api/options/' + encodeURIComponent(symbol) + q);
     if (!data.available || !data.signals) throw new Error('no options data');
     const optsObj = { currentPrice: data.currentPrice, expirations: data.expirations, signals: data.signals, available: true };
-    if (block) block.innerHTML = optionsBlockHtml(optsObj, symbol);
-    requestAnimationFrame(() => drawProbabilityDistribution(block ? block.querySelector('.prob-dist-canvas') : null));
+    if (probPanel) probPanel.innerHTML = probabilityBlockHtml(optsObj, symbol);
+    if (details) details.innerHTML = optionsDetailsHtml(optsObj, symbol);
+    if (probPanel) probPanel.style.opacity = '1';
+    if (details) details.style.opacity = '1';
+    requestAnimationFrame(() => drawProbabilityDistribution(probPanel ? probPanel.querySelector('.prob-dist-canvas') : null));
   } catch (err) {
-    if (block) block.innerHTML = '<p class="muted caption" style="padding:var(--space-2) 0;">Could not load options for this date.</p>';
+    if (probPanel) { probPanel.style.opacity = '1'; probPanel.innerHTML = '<p class="muted caption" style="padding:var(--space-2) 0;">Could not load options for this date.</p>'; }
+    if (details) details.style.opacity = '1';
   }
 });
 

@@ -20,10 +20,10 @@ import { retryFetch } from '../../lib/cache.js';
 function withTimeout(promise, ms, signal) {
   return Promise.race([
     promise,
-    new Promise(resolve => {
+    new Promise((_, reject) => {
       setTimeout(() => {
         signal?.abort();
-        resolve(null);
+        reject(new DOMException('Timeout', 'TimeoutError'));
       }, ms);
     }),
   ]);
@@ -225,7 +225,7 @@ function computeBuffettMetrics(result, value) {
   };
 }
 
-function computeScore(result, value) {
+function computeScore(result, value, fundamentalsRaw) {
   const factors = [];
   const weights = QUALITY_WEIGHTS;
 
@@ -238,7 +238,11 @@ function computeScore(result, value) {
   const i = scoreInsider(result);
   if (i != null) factors.push({ key: 'insider', label: 'Insider', score: i, weight: weights.insider });
 
-  const g = scoreGrowth(value);
+  const growthInput = {
+    epsGrowthPct: fundamentalsRaw?.epsGrowthPct ?? null,
+    beatStreak: result.earnings?.beatStreak ?? fundamentalsRaw?.beatStreak ?? null,
+  };
+  const g = scoreGrowth(growthInput);
   if (g != null) factors.push({ key: 'growth', label: 'Growth', score: g, weight: weights.growth });
 
   if (factors.length === 0) {
@@ -687,7 +691,7 @@ async function handleSignals(request, params) {
   // --- Verdict score (two lenses, server-side) ---
   const value = computeValueMetrics(fundamentalsRaw);
   result.value = value;
-  result.score = computeScore(result, value);
+  result.score = computeScore(result, value, fundamentalsRaw);
   result.marketPulse = computeMarketPulse(result);
   result.marginOfSafety = computeMarginOfSafety(value, result.price);
   result.buffettMetrics = computeBuffettMetrics(result, value);

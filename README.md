@@ -1,4 +1,4 @@
-# Investment Finder
+# Investable
 
 A free, no-account, no-API-key web tool that surfaces investable US **stocks and ETFs**
 plus crypto market data. Built for **Cloudflare Pages** and **Vercel**: a plain static frontend

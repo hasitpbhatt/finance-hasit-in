@@ -16,9 +16,9 @@ export async function GET(request) {
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>${raw} — Investment Finder</title>
+    <title>${raw} — Investable</title>
     <meta name="description" content="Free investment research for ${raw}. Analyst ratings, insider trades, options, fundamentals, and AI summary." />
-    <meta property="og:title" content="${raw} — Investment Finder" />
+    <meta property="og:title" content="${raw} — Investable" />
     <meta property="og:description" content="Free investment research for ${raw}. Analyst ratings, insider trades, options, fundamentals, and AI summary." />
     <meta property="og:type" content="website" />
     <link rel="stylesheet" href="/styles.css" />
@@ -26,8 +26,8 @@ export async function GET(request) {
   <body>
     <header class="site-header">
       <a href="/" class="brand">
-        <span class="brand-glyph">IF</span>
-        Investment Finder
+        <span class="brand-glyph">IN</span>
+        Investable
       </a>
 
       <div class="search-wrap">

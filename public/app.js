@@ -549,7 +549,7 @@ function insightHtml({ sentence, chips, details }) {
     ? `<div class="insight-chips">${chips.map(c => `<span class="chip ${c.cls || ''}">${c.text}</span>`).join('')}</div>`
     : '';
   const detailsHtml = details
-    ? `<details class="raw-details"${proMode() ? ' open' : ''}><summary>Why / the numbers</summary><div class="signal-grid mt-2">${details}</div></details>`
+    ? `<div class="signal-grid mt-2">${details}</div>`
     : '';
   return `<div class="insight">${sentence ? `<p class="insight-text">${sentence}</p>` : ''}${chipHtml}${detailsHtml}</div>`;
 }
@@ -830,6 +830,7 @@ function probabilityBlockHtml(o, symbol) {
   html += `<div class="lens-tag trader">Trader lens · probability</div>`;
   html += `<div class="options-expiry-line caption">Options expiring <strong>${moveDate || '—'}</strong>${dte != null ? ` · ${dte} days to expiry` : ''}</div>`;
   html += `<div class="prob-graph"><canvas class="prob-dist-canvas" data-price="${price}" data-sigma="${sigma}" role="img" aria-label="Probability of price at ${moveDate || 'expiry'}"></canvas></div>`;
+  html += `<div class="prob-anchor-note">Anchored at today’s price · width changes with expiry</div>`;
   html += `<div class="prob-caption">The single most likely price at ${moveDate || 'expiry'} is <strong>${fmtMoney(price)}</strong> — the same as today, because a no-move outcome is the market's best guess. The curve shows the market's expected range: <strong>50%</strong> chance it lands between ${fmtMoney(bands.p50.lo)} and ${fmtMoney(bands.p50.hi)}, <strong>90%</strong> chance between ${fmtMoney(bands.p90.lo)} and ${fmtMoney(bands.p90.hi)}. This is a <em>symmetric</em> guess — real prices have fatter tails (bigger surprises than the curve implies).</div>`;
 
   // static legend — visible without hovering
@@ -867,21 +868,28 @@ function optionsDetailsHtml(o, symbol) {
     html += `<div class="mb-2"><span class="chip ${sentCls}">${sig.sentiment}</span> <span class="caption">as of ${moveDate || ''}${dte != null ? ' · ' + dte + 'd to expiry' : ''}</span></div>`;
   }
 
-  // Layman synthesis
-  const layman = [];
-  if (sig.maxPain != null && price != null) {
-    const dir = sig.maxPain > price ? 'up' : sig.maxPain < price ? 'down' : 'flat';
-    layman.push(`Options are most concentrated around <strong>${fmtMoney(sig.maxPain)}</strong> at expiry — the “max pain” level. That’s ${dir === 'up' ? 'above' : dir === 'down' ? 'below' : 'at'} today’s price.`);
+  // Mistral-generated plain-English narrative (regenerated on each option-date change),
+  // with hardcoded layman synthesis as fallback.
+  let plainEnglish = '';
+  if (o.optionsNarrative) {
+    plainEnglish = `<div class="mb-2"><div class="caption">In plain English</div><p class="muted">${o.optionsNarrative}</p></div>`;
+  } else {
+    const layman = [];
+    if (sig.maxPain != null && price != null) {
+      const dir = sig.maxPain > price ? 'up' : sig.maxPain < price ? 'down' : 'flat';
+      layman.push(`Options are most concentrated around <strong>${fmtMoney(sig.maxPain)}</strong> at expiry — the “max pain” level. That’s ${dir === 'up' ? 'above' : dir === 'down' ? 'below' : 'at'} today’s price.`);
+    }
+    if (sig.support && sig.resistance) {
+      layman.push(`The biggest put open interest sits around <strong>${fmtMoney(sig.support.strike)}</strong> — a common support floor. The biggest call open interest sits around <strong>${fmtMoney(sig.resistance.strike)}</strong> — a common resistance ceiling.`);
+    }
+    if (sig.expectedMove) {
+      layman.push(`With current implied volatility, a typical move by expiry is <strong>±${fmtMoney(sig.expectedMove.dollar)} (${sig.expectedMove.percent}%)</strong>.`);
+    }
+    if (layman.length) {
+      plainEnglish = `<div class="mb-2"><div class="caption">In plain English</div><p class="muted">${layman.join(' ')} </p></div>`;
+    }
   }
-  if (sig.support && sig.resistance) {
-    layman.push(`The biggest put open interest sits around <strong>${fmtMoney(sig.support.strike)}</strong> — a common support floor. The biggest call open interest sits around <strong>${fmtMoney(sig.resistance.strike)}</strong> — a common resistance ceiling.`);
-  }
-  if (sig.expectedMove) {
-    layman.push(`With current implied volatility, a typical move by expiry is <strong>±${fmtMoney(sig.expectedMove.dollar)} (${sig.expectedMove.percent}%)</strong>.`);
-  }
-  if (layman.length) {
-    html += `<div class="mb-2"><div class="caption">In plain English</div><p class="muted">${layman.join(' ')} </p></div>`;
-  }
+  html += plainEnglish;
 
   // OI concentration visualization
   const dist = o.distribution;
@@ -904,6 +912,22 @@ function optionsDetailsHtml(o, symbol) {
     }
   }
 
+  // Unusual options flow — promoted as a primary signal, not buried in raw jargon.
+  // Only shown when sig.unusual.length > 0 (the actionable case).
+  if (sig.unusual?.length) {
+    html += `<div class="unusual-flow-list mb-2">`;
+    html += `<div class="caption">Unusual volume · action here</div>`;
+    sig.unusual.slice(0, 3).forEach(u => {
+      const typeCls = u.type === 'call' ? 'up' : u.type === 'put' ? 'down' : '';
+      html += `<div class="unusual-flow-item">`;
+      html += `<span><span class="chip ${typeCls}">${u.type}</span> @ ${fmtMoney(u.strike)}</span>`;
+      html += `<span class="muted">vol ${fmtNum(u.vol)} · OI ${fmtNum(u.oi)}</span>`;
+      html += `<span class="unusual-ratio">vol/OI ${u.ratio}×</span>`;
+      html += `</div>`;
+    });
+    html += `</div>`;
+  }
+
   // raw jargon — behind a collapsed toggle
   const rawRows = [];
   if (sig.expectedMove) rawRows.push(`<div><span>Expected move (1σ)</span><span>±${fmtMoney(sig.expectedMove.dollar)} (${sig.expectedMove.percent}%)</span></div>`);
@@ -917,12 +941,8 @@ function optionsDetailsHtml(o, symbol) {
   if (sig.resistance) rawRows.push(`<div><span>Resistance wall (OI)</span><span>${fmtMoney(sig.resistance.strike)}</span></div>`);
   if (sig.avgIV != null) rawRows.push(`<div><span>Avg IV</span><span>${(sig.avgIV * 100).toFixed(1)}%</span></div>`);
   if (sig.nearMoneyIV != null) rawRows.push(`<div><span>ATM IV</span><span>${(sig.nearMoneyIV * 100).toFixed(1)}%</span></div>`);
-  if (sig.unusual?.length) {
-    rawRows.push(`<div class="grid-full">Unusual volume</div>`);
-    sig.unusual.slice(0, 3).forEach(u => rawRows.push(`<div><span>${u.type} @ ${fmtMoney(u.strike)}</span><span>vol ${fmtNum(u.vol)} · OI ${fmtNum(u.oi)}</span></div>`));
-  }
   if (rawRows.length) {
-    html += `<details class="raw-details"${proMode() ? ' open' : ''}><summary>Details for the curious</summary><div class="signal-grid mt-2">${rawRows.join('')}</div></details>`;
+    html += `<div class="signal-grid mt-2">${rawRows.join('')}</div>`;
   }
 
   html += '</div>';
@@ -2351,7 +2371,7 @@ document.addEventListener('change', async (e) => {
     const q = value ? '?expiry=' + encodeURIComponent(value) : '';
     const data = await getJSON('/api/options/' + encodeURIComponent(symbol) + q);
     if (!data.available || !data.signals) throw new Error('no options data');
-    const optsObj = { currentPrice: data.currentPrice, expirations: data.expirations, signals: data.signals, available: true };
+    const optsObj = { currentPrice: data.currentPrice, expirations: data.expirations, signals: data.signals, available: true, optionsNarrative: data.optionsNarrative };
     if (overlay) {
       overlay.innerHTML = probabilityBlockHtml(optsObj, symbol);
       overlay.style.opacity = '1';

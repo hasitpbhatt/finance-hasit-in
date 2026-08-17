@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════
-   Investment Finder — Design System
+   Investable — Design System
    Calm · futuristic · minimal. Glass surfaces, hairlines,
    a single gradient accent, tabular numbers, spring motion.
    ═══════════════════════════════════════════════════════ */
@@ -328,6 +328,14 @@ main { max-width: 1080px; margin: 0 auto; padding: var(--space-4); }
 .verdict-strip[data-lens="trader"] .score-dial-fill.up,
 .verdict-strip[data-lens="trader"] .score-dial-value.up { color: #ffaa4c; }
 
+/* ---------- story layout: left rail + content ---------- */
+.story-layout { display: grid; grid-template-columns: 220px 1fr; gap: var(--space-4); align-items: start; }
+.story-nav { position: sticky; top: 72px; display: flex; flex-direction: column; gap: 6px; padding-top: var(--space-2); }
+.story-nav-btn { text-align: left; padding: 10px 14px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface-2); color: var(--muted); font-size: 13px; cursor: pointer; transition: all .18s var(--ease); }
+.story-nav-btn:hover { color: var(--text); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.story-nav-btn.active { background: var(--surface-3); color: var(--text); border-color: color-mix(in srgb, var(--accent) 55%, transparent); font-weight: 600; }
+.story-content { min-width: 0; }
+
 /* ---------- sticky section nav ---------- */
 .detail-nav {
   position: sticky; top: 60px; z-index: 6; display: flex; flex-wrap: wrap; gap: 6px;
@@ -339,6 +347,10 @@ main { max-width: 1080px; margin: 0 auto; padding: var(--space-4); }
 .detail-nav-pill { padding: 7px 15px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--muted); font-size: 12px; font-family: var(--font); cursor: pointer; transition: all .18s var(--ease); min-height: 30px; }
 .detail-nav-pill:hover { color: var(--text); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
 .detail-nav-pill.active { color: var(--text); background: var(--surface-3); border-color: color-mix(in srgb, var(--accent) 55%, transparent); font-weight: 600; }
+@media (max-width: 1024px) {
+  .story-layout { grid-template-columns: 1fr; }
+  .story-nav { display: none; }
+}
 @media (max-width: 760px) {
   .detail-nav { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
   .detail-nav::-webkit-scrollbar { display: none; }
@@ -895,3 +907,16 @@ tbody tr:hover { background: var(--surface-2); }
   .panel-toggle { top: auto; bottom: 18px; left: 12px; transform: none; border-radius: 10px; }
   .panel-toggle.hidden { transform: translateY(8px); }
 }
+
+/* ---------- options open interest concentration ---------- */
+.oi-bars { border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; background: var(--surface-2); }
+.oi-row { display: grid; grid-template-columns: 80px 1fr 120px; align-items: center; gap: var(--space-2); padding: 6px 10px; border-bottom: 1px solid var(--border); font-size: 12px; }
+.oi-row:last-child { border-bottom: none; }
+.oi-row.oi-current { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.oi-strike { font-variant-numeric: tabular-nums; color: var(--muted); text-align: right; }
+.oi-bars-inner { display: flex; height: 10px; border-radius: 6px; overflow: hidden; background: var(--surface-3); gap: 2px; }
+.oi-bar { height: 100%; }
+.oi-bar.call { background: linear-gradient(90deg, #60a5fa, #3b82f6); }
+.oi-bar.put { background: linear-gradient(90deg, #fbbf24, #f59e0b); }
+.oi-labels { display: flex; justify-content: space-between; color: var(--muted); }
+

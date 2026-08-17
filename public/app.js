@@ -212,12 +212,15 @@ function narrativeBreathHtml(s) {
   const cutAt = text.lastIndexOf('. ', 180);
   const breath = cutAt > 50 ? text.substring(0, cutAt + 1) : text.substring(0, 180) + '…';
   const full = text;
+  const lens = currentLens();
+  const defaultActive = lens === 'investor' && personas.buffett ? 'buffett' : 'summary';
 
   const pills = Object.keys(NARRATIVE_PERSONAS).map(k => {
     const has = k === 'summary' ? true : !!personas[k];
     if (!has) return '';
     const p = NARRATIVE_PERSONAS[k];
-    return `<button class="persona-pill${k === 'summary' ? ' active' : ''}" data-persona="${k}" data-full="${encodeURIComponent(k === 'summary' ? full : personas[k])}" title="${p.blurb}">${p.label}</button>`;
+    const isActive = k === defaultActive;
+    return `<button class="persona-pill${isActive ? ' active' : ''}" data-persona="${k}" data-full="${encodeURIComponent(k === 'summary' ? full : personas[k])}" title="${p.blurb}">${p.label}</button>`;
   }).join('');
 
   return `
@@ -609,6 +612,35 @@ function qualityContent(s) {
   return insightHtml({ sentence: take, chips, details: details.length ? details.join('') : null });
 }
 
+// Value Lens — Buffett-style metrics, plain English first
+function valueLensContent(s) {
+  const bm = s.buffettMetrics;
+  if (!bm) return '';
+  const chips = [];
+  const details = [];
+  let take = 'Value metrics are limited.';
+  if (bm.marginOfSafetyState) {
+    const mos = bm.marginOfSafetyPct;
+    if (bm.marginOfSafetyState === 'cheap') { take = `Price is ${Math.abs(mos).toFixed(1)}% below Graham fair value — margin of safety. `; chips.push({ text: `MOS ${mos.toFixed(1)}%`, cls: 'up' }); }
+    else if (bm.marginOfSafetyState === 'expensive') { take = `Price is ${Math.abs(mos).toFixed(1)}% above fair value. `; chips.push({ text: `MOS ${mos.toFixed(1)}%`, cls: 'down' }); }
+    else { take = `Price is roughly in line with fair value. `; chips.push({ text: `MOS ${mos.toFixed(1)}%`, cls: '' }); }
+  }
+  if (bm.roe != null) {
+    details.push(`<div><span>ROE</span><span>${bm.roe}%</span></div>`);
+  }
+  if (bm.debtToEquity != null) details.push(`<div><span>Debt/equity</span><span>${bm.debtToEquity}</span></div>`);
+  if (bm.fcfYield != null) details.push(`<div><span>FCF yield</span><span>${bm.fcfYield}%</span></div>`);
+  if (bm.earningsYield != null) details.push(`<div><span>Earnings yield</span><span>${bm.earningsYield}%</span></div>`);
+  if (bm.fcfConversion != null) details.push(`<div><span>FCF conversion</span><span>${bm.fcfConversion}</span></div>`);
+  if (bm.revenueTrend) details.push(`<div><span>Revenue trend</span><span>${bm.revenueTrend}</span></div>`);
+  if (bm.netIncomeTrend) details.push(`<div><span>Net income trend</span><span>${bm.netIncomeTrend}</span></div>`);
+  if (bm.dividendYield != null) details.push(`<div><span>Dividend yield</span><span>${bm.dividendYield}%</span></div>`);
+  if (bm.insiderBuys != null) details.push(`<div><span>Insider buys</span><span>${bm.insiderBuys}</span></div>`);
+  if (bm.insiderSells != null) details.push(`<div><span>Insider sells</span><span>${bm.insiderSells}</span></div>`);
+  if (bm.earningsBeatStreak != null) details.push(`<div><span>Earnings beat streak</span><span>${bm.earningsBeatStreak} qtrs</span></div>`);
+  return insightHtml({ sentence: take, chips, details: details.length ? details.join('') : null });
+}
+
 // Growth — "is it growing, and is the price fair for that growth?" (Lynch)
 function growthContent(s) {
   const x = s.xbrl;
@@ -828,10 +860,48 @@ function optionsDetailsHtml(o, symbol) {
   const dte = sig.dte;
   const sentCls = sig.sentiment === 'Bullish' ? 'up' : sig.sentiment === 'Bearish' ? 'down' : '';
   const moveDate = sig.expiryDate;
+  const price = o.currentPrice;
 
   let html = '<div class="options-block" id="options-details">';
   if (sig.sentiment) {
     html += `<div class="mb-2"><span class="chip ${sentCls}">${sig.sentiment}</span> <span class="caption">as of ${moveDate || ''}${dte != null ? ' · ' + dte + 'd to expiry' : ''}</span></div>`;
+  }
+
+  // Layman synthesis
+  const layman = [];
+  if (sig.maxPain != null && price != null) {
+    const dir = sig.maxPain > price ? 'up' : sig.maxPain < price ? 'down' : 'flat';
+    layman.push(`Options are most concentrated around <strong>${fmtMoney(sig.maxPain)}</strong> at expiry — the “max pain” level. That’s ${dir === 'up' ? 'above' : dir === 'down' ? 'below' : 'at'} today’s price.`);
+  }
+  if (sig.support && sig.resistance) {
+    layman.push(`The biggest put open interest sits around <strong>${fmtMoney(sig.support.strike)}</strong> — a common support floor. The biggest call open interest sits around <strong>${fmtMoney(sig.resistance.strike)}</strong> — a common resistance ceiling.`);
+  }
+  if (sig.expectedMove) {
+    layman.push(`With current implied volatility, a typical move by expiry is <strong>±${fmtMoney(sig.expectedMove.dollar)} (${sig.expectedMove.percent}%)</strong>.`);
+  }
+  if (layman.length) {
+    html += `<div class="mb-2"><div class="caption">In plain English</div><p class="muted">${layman.join(' ')} </p></div>`;
+  }
+
+  // OI concentration visualization
+  const dist = o.distribution;
+  if (Array.isArray(dist) && dist.length && price != null) {
+    const maxOI = Math.max(...dist.map(d => Math.max(d.callOI || 0, d.putOI || 0)), 1);
+    const strikesToShow = dist.filter(d => Math.abs(d.strike - price) / price < 0.25).slice(0, 21);
+    if (strikesToShow.length) {
+      html += `<div class="mb-2"><div class="caption">Where open interest is concentrated</div><div class="oi-bars">`;
+      strikesToShow.forEach(d => {
+        const callPct = Math.min(100, (d.callOI / maxOI) * 100);
+        const putPct = Math.min(100, (d.putOI / maxOI) * 100);
+        const isCurrent = Math.abs(d.strike - price) < price * 0.01;
+        html += `<div class="oi-row${isCurrent ? ' oi-current' : ''}">`;
+        html += `<div class="oi-strike">${fmtMoney(d.strike)}</div>`;
+        html += `<div class="oi-bars-inner"><div class="oi-bar call" style="width:${callPct}%"></div><div class="oi-bar put" style="width:${putPct}%"></div></div>`;
+        html += `<div class="oi-labels"><span class="caption">C ${fmtNum(d.callOI)}</span><span class="caption">P ${fmtNum(d.putOI)}</span></div>`;
+        html += `</div>`;
+      });
+      html += `</div><div class="caption muted">Blue = calls, Orange = puts. Longer bar = more open interest. Current price highlighted.</div></div>`;
+    }
   }
 
   // raw jargon — behind a collapsed toggle
@@ -1084,6 +1154,7 @@ function renderSignals(c, d, s) {
   const sections = [
     { id: 'business', title: 'The Business', content: businessContent(d, s), open: true },
     { id: 'quality', title: 'Quality', content: qualityContent(s), open: false },
+    { id: 'value', title: 'Value Lens', content: valueLensContent(s), open: false },
     { id: 'growth', title: 'Growth', content: growthContent(s), open: false },
     { id: 'price', title: 'Price vs Value', content: priceContent(d, s), open: false },
     { id: 'ownership', title: 'Ownership', content: ownershipContent(s), open: false },
@@ -1113,24 +1184,43 @@ function renderSignals(c, d, s) {
     }
   }
 
-  // render accordion sections (no chart section — it's always visible above)
-  story.innerHTML = sections.map(sec => sectionHtml(sec.id, sec.title, sec.content, sec.open)).join('');
+  // Render left-rail navigation + single content pane
+  let persistedId = null;
+  try { persistedId = localStorage.getItem('if_open_section'); } catch {}
+  const activeId = sections.find(s => s.id === persistedId)?.id || sections.find(s => s.open)?.id || sections[0]?.id;
+  const navHtml = sections.map(sec => `<button class="story-nav-btn${sec.id === activeId ? ' active' : ''}" data-section="${sec.id}">${sec.title}</button>`).join('');
+  const contentHtml = sections.find(sec => sec.id === activeId)?.content || '';
+  story.innerHTML = `<div class="story-layout"><nav class="story-nav">${navHtml}</nav><div class="story-content" id="story-content">${contentHtml}</div></div>`;
 
-  // accordion behavior: one open at a time
-  story.querySelectorAll('.story-toggle').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const section = btn.closest('.story-section');
-      const isOpen = section.classList.contains('open');
-      if (!isOpen) story.querySelectorAll('.story-section').forEach(x => x.classList.remove('open'));
-      section.classList.toggle('open', !isOpen);
-      btn.setAttribute('aria-expanded', !isOpen);
-      try { if (section.dataset.section !== 'chart') localStorage.setItem('if_open_section', isOpen ? '' : section.dataset.section); } catch { /* ignore */ }
-      if (!isOpen) {
-        const cv = section.querySelector('.prob-dist-canvas');
-        if (cv) requestAnimationFrame(() => drawProbabilityDistribution(cv));
-      }
-    });
+  // Unified sync function
+  const jumpNav = c.querySelector('#detail-jump-nav');
+  const syncNav = (id) => {
+    const sec = sections.find(s => s.id === id);
+    if (!sec) return;
+    // update rail buttons
+    story.querySelectorAll('.story-nav-btn').forEach(b => b.classList.toggle('active', b.dataset.section === id));
+    // update top pills
+    if (jumpNav) {
+      jumpNav.querySelectorAll('.detail-nav-pill').forEach(b => b.classList.toggle('active', b.dataset.section === id));
+    }
+    // update content
+    const contentEl = story.querySelector('#story-content');
+    if (contentEl) contentEl.innerHTML = sec.content;
+    try { localStorage.setItem('if_open_section', id); } catch {}
+  };
+
+  // nav click handler
+  story.querySelectorAll('.story-nav-btn').forEach(btn => {
+    btn.addEventListener('click', () => syncNav(btn.dataset.section));
   });
+
+  // Update detail jump nav for mobile pills
+  if (jumpNav) {
+    jumpNav.innerHTML = sections.map(sec => `<button class="detail-nav-pill${sec.id === activeId ? ' active' : ''}" data-section="${sec.id}">${sec.title}</button>`).join('');
+    jumpNav.querySelectorAll('.detail-nav-pill').forEach(btn => {
+      btn.addEventListener('click', () => syncNav(btn.dataset.section));
+    });
+  }
 
   // hero actions: Watch / Compare / Glossary
   const watchBtn = c.querySelector('#hero-watch');
@@ -2185,7 +2275,7 @@ function showTab(tabId) {
   if (panel) panel.classList.add('active');
   const btn = $(`.tab[data-tab="${tabId}"]`);
   if (btn) btn.classList.add('active');
-  document.title = 'Investment Finder — free US stocks & ETFs';
+  document.title = 'Investable — free US stocks & ETFs';
 }
 
 function showDetail() {
@@ -2227,7 +2317,7 @@ async function openDetail(symbol, pushState) {
     if (story) story.innerHTML = '<p class="muted" style="padding:16px;font-size:13px;">Signals are taking longer than usual — try again in a minute.</p>';
   }
 
-  document.title = `${symbol} — Investment Finder`;
+  document.title = `${symbol} — Investable`;
 }
 
 // ---------- popstate ----------

@@ -47,7 +47,7 @@ This repo deploys to Vercel via the **`prod`** branch. Pushing to `prod` = shipp
 
 - Static frontend in `public/` (`index.html`, `styles.css`, `app.js`) — **no build step**, no package.json, no framework.
 - Serverless API in `api/` (`/api/*`), shared libs in `lib/`.
-- Key routes: `api/signals/[symbol].js` (deep-dive scores + narrative), `api/detail/[symbol].js` (financials), `api/options/[symbol].js`, `api/crypto.js`, `api/screener.js`, `api/search.js`, `api/overview.js`, `api/market/sentiment.js`, `api/s/[symbol].js` (detail page).
+- Key routes: `api/signals/[symbol].js` (deep-dive scores + narrative + buffettMetrics), `api/detail/[symbol].js` (financials), `api/options/[symbol].js` (options signals + OI distribution), `api/crypto.js`, `api/screener.js`, `api/search.js`, `api/overview.js`, `api/market/sentiment.js`, `api/s/[symbol].js` (detail page).
 
 ### Local dev
 
@@ -63,12 +63,15 @@ vercel dev   # serves at http://localhost:3000 (hot-reloads)
 
 ### UX principles (user requirements — do not regress)
 
-1. **Plain-English first**, number second, jargon third (jargon stays in collapsed sections).
-2. Verdict page is 3 zones: **A) verdict strip** (radial score dial + grade + factor chips + Quality-vs-Market-pulse chips + persona switcher + copy) → **B) price chart** → **C) accordion** (The Business opens by default; sticky jump-pill nav with scroll-spy).
+1. **Plain-English first**, number second, jargon third. Jargon lives in Pro mode or expandable details, not in the primary narrative.
+2. Verdict page is 3 zones: **A) verdict strip** (radial score dial + grade + factor chips + Quality-vs-Market-pulse chips + persona switcher + copy) → **B) price chart** → **C) story content**. Story navigation is a persistent left rail on desktop ≥1024px and a sticky pill bar on mobile. Both controls are synced to the same content pane; no duplicate collapse/expand controls. The Business is default. Content panels are single-column, always visible on selection.
 3. Score is two lenses: **Quality score** (fundamentals) vs **Market pulse** (short-term crowd noise); options/retail data are "market noise".
 4. "Most likely price" = today's price. Bell-curve probability table replaced by hover tooltip on the chart.
-5. Persona feature: one Mistral call returns `summary` + 6 investor takes; frontend swaps text client-side (no extra network call).
+5. Persona feature: one Mistral call returns `summary` + 6 investor takes; frontend swaps text client-side (no extra network call). Buffett is default persona for Investor lens.
 6. Detail charts: `2y` daily + `max` quarterly (two fetches).
+7. Value Lens: API returns `buffettMetrics` (Graham fair value, margin of safety, ROE, debt/equity, FCF yield, earnings yield, FCF conversion, revenue/net income trends, dividend yield/payout, insider flow, earnings beat streak). UI presents plain-English synthesis first, with chips and details.
+8. Options layman view: API returns OI/volume distribution per strike for selected expiry. UI shows plain-English synthesis (max pain, support/resistance walls, expected move) plus an OI concentration bar chart with call/put bars and current price highlight.
+9. Reduce fluff: remove redundant navigation affordances, keep section labels short, surface key metrics as chips in the verdict strip, and defer tables/details to Pro mode.
 
 ### Verification (before declaring done)
 

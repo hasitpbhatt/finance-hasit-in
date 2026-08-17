@@ -189,6 +189,42 @@ function computeMarginOfSafety(value, price) {
   };
 }
 
+function computeBuffettMetrics(result, value) {
+  if (!result) return null;
+  const xbrl = result.xbrl;
+  const price = result.price;
+  const mos = computeMarginOfSafety(value, price);
+  const insiderBuys = (result.insiderTrades || []).filter(t => t.code === 'P').length;
+  const insiderSells = (result.insiderTrades || []).filter(t => t.code === 'S').length;
+  const roe = value?.roe != null ? Number((value.roe * 100).toFixed(1)) : null;
+  const debtToEquity = value?.debtToEquity != null ? Number(value.debtToEquity.toFixed(2)) : null;
+  const fcfYield = value?.fcfYield != null ? Number(value.fcfYield.toFixed(2)) : null;
+  const earningsYield = value?.earningsYield != null ? Number(value.earningsYield.toFixed(2)) : null;
+  const revenueTrend = xbrl?.available ? xbrl.revenue?.trendLabel || null : null;
+  const netIncomeTrend = xbrl?.available ? xbrl.netIncome?.trendLabel || null : null;
+  const dividendYield = result.dividends?.available && result.dividends.yield != null ? Number((result.dividends.yield * 100).toFixed(2)) : null;
+  const payoutRatio = result.dividends?.payoutRatio != null ? Number(result.dividends.payoutRatio.toFixed(1)) : null;
+  const beatStreak = result.earnings?.beatStreak ?? 0;
+  return {
+    grahamFairValue: mos?.fairValue ?? null,
+    marginOfSafetyPct: mos?.mosPct ?? null,
+    marginOfSafetyState: mos?.state ?? null,
+    roe,
+    debtToEquity,
+    fcfYield,
+    earningsYield,
+    fcfConversion: value?.fcfConversion != null ? Number(value.fcfConversion.toFixed(2)) : null,
+    revenueTrend,
+    netIncomeTrend,
+    dividendYield,
+    payoutRatio,
+    insiderBuys,
+    insiderSells,
+    earningsBeatStreak: beatStreak,
+    ownerEarningsProxyNote: 'Owner earnings approximated from net income trend + FCF yield',
+  };
+}
+
 function computeScore(result, value) {
   const factors = [];
   const weights = QUALITY_WEIGHTS;
@@ -654,6 +690,7 @@ async function handleSignals(request, params) {
   result.score = computeScore(result, value);
   result.marketPulse = computeMarketPulse(result);
   result.marginOfSafety = computeMarginOfSafety(value, result.price);
+  result.buffettMetrics = computeBuffettMetrics(result, value);
 
   // --- Mistral narrative (runs after all signals, uses aggregated data) ---
   try {

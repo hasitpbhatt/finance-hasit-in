@@ -69,6 +69,42 @@ if (!symbol) return json({ error: 'symbol required' }, { status: 400 });
     ? expirations.reduce((a, b) => (b.epoch < a.epoch ? b : a)).date
     : null;
 
+  // Build OI distribution for selected expiry
+  let distribution = null;
+  if (chain?.chain?.length) {
+    // Use the same expiry that signals uses
+    const sigExpiry = signals?.expiryDate;
+    let activeEntry = null;
+    if (sigExpiry) {
+      const epoch = Math.floor(new Date(sigExpiry + 'T00:00:00Z').getTime() / 1000);
+      activeEntry = chain.chain.find(e => e.expiry === epoch);
+    }
+    if (!activeEntry) {
+      const activeEpoch = requestedEpoch != null ? requestedEpoch : chain.chain[0]?.expiry;
+      activeEntry = chain.chain.find(e => e.expiry === activeEpoch) || chain.chain[0];
+    }
+    if (activeEntry) {
+      const strikes = new Map();
+      (activeEntry.calls || []).forEach(c => {
+        if (c.strike == null) return;
+        const s = Number(c.strike);
+        if (!strikes.has(s)) strikes.set(s, { strike: s, callOI: 0, putOI: 0 });
+        const rec = strikes.get(s);
+        const oi = c.oi ?? c.vol ?? 0;
+        rec.callOI += oi;
+      });
+      (activeEntry.puts || []).forEach(p => {
+        if (p.strike == null) return;
+        const s = Number(p.strike);
+        if (!strikes.has(s)) strikes.set(s, { strike: s, callOI: 0, putOI: 0 });
+        const rec = strikes.get(s);
+        const oi = p.oi ?? p.vol ?? 0;
+        rec.putOI += oi;
+      });
+      distribution = Array.from(strikes.values()).sort((a, b) => a.strike - b.strike);
+    }
+  }
+
   return json({
     symbol,
     available: true,
@@ -78,5 +114,6 @@ if (!symbol) return json({ error: 'symbol required' }, { status: 400 });
     selectedExpiry: signals?.expiryDate || nearestExpiry,
     nearestExpiry,
     signals,
+    distribution,
   }, { headers: { 'Cache-Control': 's-maxage=600' } });
 }

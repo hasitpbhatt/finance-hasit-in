@@ -56,6 +56,10 @@ async function getJSONWithTimeout(url, ms = 18000) {
 const ICONS = {
   chevron: '<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6 3.5 10 8 6 12.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   copy: '<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M10.5 5.5v-1a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1h1" stroke="currentColor" stroke-width="1.4"/></svg>',
+  back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>',
+  star: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>',
+  plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>',
+  glossary: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>',
 };
 
 // ---------- score dial (radial 0–100 arc) ----------
@@ -166,14 +170,6 @@ function verdictStripHtml(d, s) {
   const flag = s.signalFlags?.redFlag
     ? '<div class="flag-banner">⚠ Red flag: officer departures + insider selling</div>'
     : '';
-  const factors = s.score?.factors?.length
-    ? `<div class="score-factors">${s.score.factors.map(f => {
-        const cls = f.score > 0 ? 'up' : f.score < 0 ? 'down' : 'mid';
-        const label = f.score > 0 ? '+' + f.score : f.score;
-        const tip = FACTOR_TITLES[f.key] || '';
-        return `<span class="score-factor"${tip ? ` title="${tip}"` : ''}><span class="dot ${cls}"></span>${f.label} ${label}</span>`;
-      }).join('')}</div>`
-    : '';
   const cov = s.score?.coverage;
   const conf = cov != null && cov < 1
     ? `<div class="caption confidence-note">Based on ${s.score.factors?.length || 0} of 4 data sources (${Math.round(cov * 100)}% coverage) — treat the score as provisional when coverage is low.</div>`
@@ -188,9 +184,11 @@ function verdictStripHtml(d, s) {
           <div id="quality-vs-noise">${qualityVsNoiseHtml(s)}</div>
           ${narrativeBreathHtml(s)}
         </div>
+        <div class="verdict-actions">
+          ${copyVerdictHtml(d, s)}
+        </div>
       </div>
-      ${factors}
-      ${marginOfSafetyHtml(s)}
+      ${lensSwitchHtml()}
       ${conf}
       <div class="caption disclaimer">Research context, not a trade trigger. The verdict blends fundamentals only; options &amp; retail flow are shown separately as risk.</div>
     </div>`;
@@ -290,7 +288,7 @@ function applyProMode(c) {
   c.querySelectorAll('.raw-details').forEach(el => { el.open = on; });
 }
 
-// ---------- persistent side rail (sticky on desktop) ----------
+// ---------- persistent side rail (DEPRECATED — controls moved to hero + verdict strip) ----------
 function railGradeHtml(s) {
   const sc = primaryScore(s);
   if (!sc || !sc.factors?.length) return '<span class="muted">Not enough data</span>';
@@ -300,28 +298,33 @@ function railGradeHtml(s) {
   return `<div class="rail-grade-val ${cls}">${v > 0 ? '+' : ''}${v}</div><div class="rail-grade-label">${label}</div>`;
 }
 function railHtml(d, s) {
-  return `
-    <div class="rail-card">
-      <div class="rail-price">${fmtMoney(d.price)} <span class="change ${chgClass(d.changePercent)}">${fmtPct(d.changePercent)}</span></div>
-      <div class="rail-grade" id="rail-grade">${railGradeHtml(s)}</div>
-      ${lensSwitchHtml()}
-      <button class="pro-toggle${proMode() ? ' active' : ''}" id="pro-toggle" type="button" aria-pressed="${proMode()}">Pro · show numbers</button>
-      <div class="rail-copy">${copyVerdictHtml(d, s)}</div>
-      <div class="caption rail-note">Verdict stays in view as you scroll.</div>
-    </div>`;
+  // Rail removed — all controls now live in the hero row and verdict strip.
+  return '';
 }
 
 // ---------- hero ----------
 function heroHtml(d, s) {
+  const cmpActive = isInCompare(d.symbol);
+  const watchActive = isWatched(d.symbol);
   return `
     <div class="detail-hero">
       <div class="detail-hero-left">
-        <div class="ticker">${d.symbol}</div>
-        <div class="name">${d.name || ''} · ${d.exchange || ''}</div>
+        <button class="back-btn" id="back-btn" type="button" aria-label="Go back">${ICONS.back}</button>
+        <div class="detail-hero-info">
+          <div class="ticker">${d.symbol}</div>
+          <div class="name">${d.name || ''} · ${d.exchange || ''}</div>
+        </div>
       </div>
       <div class="detail-hero-right">
-        <div class="price">${fmtMoney(d.price)}</div>
-        <div class="change ${chgClass(d.changePercent)}">${fmtPct(d.changePercent)}</div>
+        <div class="detail-hero-price">
+          <div class="price">${fmtMoney(d.price)}</div>
+          <div class="change ${chgClass(d.changePercent)}">${fmtPct(d.changePercent)}</div>
+        </div>
+        <div class="detail-hero-actions">
+          <button class="hero-action-btn${watchActive ? ' active' : ''}" id="hero-watch" type="button" data-symbol="${d.symbol}" title="${watchActive ? 'Remove from watchlist' : 'Add to watchlist'}">${ICONS.star}</button>
+          <button class="hero-action-btn${cmpActive ? ' active' : ''}" id="hero-compare" type="button" data-symbol="${d.symbol}" title="${cmpActive ? 'Remove from compare' : 'Add to compare'}">${ICONS.plus}</button>
+          <button class="hero-action-btn" id="hero-gloss" type="button" title="Plain-English glossary">${ICONS.glossary}</button>
+        </div>
       </div>
     </div>`;
 }
@@ -1040,31 +1043,44 @@ function newsContent(d) {
 
 // ---------- main renderers ----------
 function renderDetailFast(c, d, symbol) {
-  c.innerHTML = `<div class="detail-layout"><div class="detail-main">${heroHtml(d, '')}${chartHtml(d)}</div><aside class="detail-rail" id="detail-rail"></aside></div>`;
-  drawChart(d.chart, '1Y', d.indicators);
-
-  // init section accordion (story)
-  const main = c.querySelector('.detail-main');
-  const story = document.createElement('div');
-  story.className = 'story-sections';
-  story.id = 'story-sections';
-  story.innerHTML = '<div class="loading-skeleton muted" style="padding:16px 0;font-size:13px;">Loading analysis…</div>';
-  main.appendChild(story);
+  c.innerHTML = `<div class="detail-layout">
+    ${heroHtml(d, '')}
+    <div id="detail-chart-zone" class="detail-chart-zone">${chartHtml(d)}</div>
+    <div id="detail-jump-nav" class="detail-nav"></div>
+    <div id="story-sections" class="story-sections"></div>
+    <button class="pro-fab${proMode() ? ' active' : ''}" id="pro-toggle" type="button" aria-pressed="${proMode()}">Pro · show numbers</button>
+  </div>`;
 
   // attach chart range handlers
-  c.querySelectorAll('.chart-range-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      c.querySelectorAll('.chart-range-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      drawChart(d.chart, btn.dataset.range, d.indicators);
+  const chartZone = c.querySelector('#detail-chart-zone');
+  if (chartZone) {
+    chartZone.querySelectorAll('.chart-range-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        chartZone.querySelectorAll('.chart-range-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        drawChart(d.chart, btn.dataset.range, d.indicators);
+      });
     });
-  });
+  }
+
+  // draw chart after DOM is painted
+  requestAnimationFrame(() => drawChart(d.chart, '1Y', d.indicators));
+
+  // back button
+  const backBtn = c.querySelector('#back-btn');
+  if (backBtn) {
+    backBtn.addEventListener('click', () => {
+      history.pushState(null, '', '/');
+      showTab('overview');
+    });
+  }
 }
 
 function renderSignals(c, d, s) {
   const story = $('#story-sections') || c;
 
-  // build all section content
+  // build section content — Chart is NOT in the accordion (always visible above)
   const sections = [
     { id: 'business', title: 'The Business', content: businessContent(d, s), open: true },
     { id: 'quality', title: 'Quality', content: qualityContent(s), open: false },
@@ -1076,15 +1092,11 @@ function renderSignals(c, d, s) {
     { id: 'noise', title: 'Market pulse (short-term) · Trader lens', content: marketNoiseContent(s, d.symbol), open: false },
   ].filter(sec => sec.content.trim() !== '');
 
-  // always-visible verdict strip (dial + factors + Quality-vs-Noise + narrative)
+  // always-visible verdict strip (dial + plain sentence + Quality-vs-Noise + lens toggle)
   const heroEl = c.querySelector('.detail-hero');
   if (heroEl && !c.querySelector('.verdict-strip')) {
     heroEl.insertAdjacentHTML('afterend', verdictStripHtml(d, s));
   }
-
-  // persistent side rail (sticky on desktop): glance summary + controls
-  const rail = c.querySelector('#detail-rail');
-  if (rail) rail.innerHTML = railHtml(d, s);
 
   // Trader overlay — lives in the chart zone (Zone B), hidden in Investor lens.
   const overlay = c.querySelector('#trader-overlay');
@@ -1101,7 +1113,7 @@ function renderSignals(c, d, s) {
     }
   }
 
-  // render sections
+  // render accordion sections (no chart section — it's always visible above)
   story.innerHTML = sections.map(sec => sectionHtml(sec.id, sec.title, sec.content, sec.open)).join('');
 
   // accordion behavior: one open at a time
@@ -1112,12 +1124,36 @@ function renderSignals(c, d, s) {
       if (!isOpen) story.querySelectorAll('.story-section').forEach(x => x.classList.remove('open'));
       section.classList.toggle('open', !isOpen);
       btn.setAttribute('aria-expanded', !isOpen);
+      try { if (section.dataset.section !== 'chart') localStorage.setItem('if_open_section', isOpen ? '' : section.dataset.section); } catch { /* ignore */ }
       if (!isOpen) {
         const cv = section.querySelector('.prob-dist-canvas');
         if (cv) requestAnimationFrame(() => drawProbabilityDistribution(cv));
       }
     });
   });
+
+  // hero actions: Watch / Compare / Glossary
+  const watchBtn = c.querySelector('#hero-watch');
+  if (watchBtn) {
+    if (isWatched(d.symbol)) { watchBtn.classList.add('active'); }
+    watchBtn.addEventListener('click', () => {
+      if (isWatched(d.symbol)) { toggleWatch(d.symbol, d.name); watchBtn.classList.remove('active'); showToast('Removed ' + d.symbol + ' from watchlist'); }
+      else { toggleWatch(d.symbol, d.name); watchBtn.classList.add('active'); showToast('Added ' + d.symbol + ' to watchlist'); openPanel('watch'); }
+    });
+  }
+  const cmpBtn = c.querySelector('#hero-compare');
+  if (cmpBtn) {
+    if (isInCompare(d.symbol)) { cmpBtn.classList.add('active'); }
+    cmpBtn.addEventListener('click', () => {
+      if (isInCompare(d.symbol)) { removeFromCompare(d.symbol); cmpBtn.classList.remove('active'); showToast('Removed ' + d.symbol + ' from compare'); }
+      else {
+        if (compareState.symbols.length >= 6) { showToast('Max 6 tickers in compare'); return; }
+        addToCompare(d.symbol, d.name); cmpBtn.classList.add('active'); showToast('Added ' + d.symbol + ' to compare'); openPanel('compare');
+      }
+    });
+  }
+  const glossBtn = c.querySelector('#hero-gloss');
+  if (glossBtn) glossBtn.addEventListener('click', openGlossary);
 
   // copy verdict
   c.querySelectorAll('.copy-btn').forEach(btn => {
@@ -1166,10 +1202,10 @@ function renderSignals(c, d, s) {
     });
   });
 
-  // sticky section nav (covers Verdict · Chart · all accordion sections)
+  // sticky section nav (positioned after the chart, before accordion)
   initDetailNav(c);
 
-  // single lens switcher — Investor (default) vs Trader reshapes the whole view
+  // lens switcher — Investor (default) vs Trader
   c.querySelectorAll('.lens-pill').forEach(pill => {
     pill.addEventListener('click', () => {
       c.querySelectorAll('.lens-pill').forEach(p => { p.classList.remove('active'); p.setAttribute('aria-selected', 'false'); });
@@ -1177,13 +1213,11 @@ function renderSignals(c, d, s) {
       pill.setAttribute('aria-selected', 'true');
       const lens = pill.dataset.lens;
       try { localStorage.setItem('if_lens', lens); } catch { /* ignore */ }
-      const hint = c.querySelector('.lens-hint');
-      if (hint) hint.innerHTML = lens === 'trader' ? 'Short-term market bets &amp; options' : 'Long-term business quality';
       applyLens(c, d, s);
     });
   });
 
-  // Pro toggle — persist and live-apply to all "Why / the numbers" blocks
+  // Pro toggle (floating FAB)
   const proBtn = c.querySelector('#pro-toggle');
   if (proBtn) {
     proBtn.addEventListener('click', () => {
@@ -1198,37 +1232,71 @@ function renderSignals(c, d, s) {
   // sync the page to the persisted lens on first paint
   applyLens(c, d, s);
   applyProMode(c);
+
+  // restore the last-opened accordion section across navigation (session persistence)
+  try {
+    const saved = localStorage.getItem('if_open_section');
+    if (saved) {
+      const target = story.querySelector(`.story-section[data-section="${saved}"]`);
+      if (target) {
+        story.querySelectorAll('.story-section').forEach(x => x.classList.remove('open'));
+        target.classList.add('open');
+        const btn = target.querySelector('.story-toggle');
+        if (btn) btn.setAttribute('aria-expanded', 'true');
+        const cv = target.querySelector('.prob-dist-canvas');
+        if (cv) requestAnimationFrame(() => drawProbabilityDistribution(cv));
+      }
+    }
+  } catch { /* ignore */ }
 }
 
-// Sticky jump-pill nav for the whole detail page; scroll-spies via IntersectionObserver.
+// Sticky jump-pill nav for the detail page; scroll-spies via IntersectionObserver.
+// Positioned after the chart, before the accordion sections.
 function initDetailNav(c) {
   const story = c.querySelector('#story-sections');
   if (!story) return;
   const sections = [...story.querySelectorAll('.story-section')];
   if (!sections.length) return;
-  if (c.querySelector('.detail-nav')) return;
+  const existingNav = c.querySelector('#detail-jump-nav');
+  if (!existingNav) return;
 
-  const nav = document.createElement('div');
-  nav.className = 'detail-nav';
+  const nav = existingNav;
+  nav.innerHTML = '';
 
   const items = [];
   const spyTargets = [];
 
-  function addTop(cls, label) {
-    const target = c.querySelector(cls);
+  // Add Verdict pill (points to the verdict strip)
+  function addVerdictPill() {
+    const target = c.querySelector('.verdict-strip');
     if (!target) return;
     const pill = document.createElement('button');
     pill.className = 'detail-nav-pill';
-    pill.dataset.target = cls;
-    pill.textContent = label;
+    pill.dataset.target = 'verdict';
+    pill.textContent = 'Verdict';
     pill.addEventListener('click', () => target.scrollIntoView({ behavior: 'smooth', block: 'start' }));
     nav.appendChild(pill);
     items.push({ pill, sec: target });
     spyTargets.push(target);
   }
-  addTop('.verdict-strip', 'Verdict');
-  addTop('.chart-wrap', 'Chart');
+  addVerdictPill();
 
+  // Add Chart pill (points to the chart zone)
+  function addChartPill() {
+    const target = c.querySelector('#detail-chart-zone');
+    if (!target) return;
+    const pill = document.createElement('button');
+    pill.className = 'detail-nav-pill';
+    pill.dataset.target = 'chart';
+    pill.textContent = 'Chart';
+    pill.addEventListener('click', () => target.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    nav.appendChild(pill);
+    items.push({ pill, sec: target });
+    spyTargets.push(target);
+  }
+  addChartPill();
+
+  // Add accordion section pills
   sections.forEach(sec => {
     const titleEl = sec.querySelector('.story-toggle span');
     const title = titleEl ? titleEl.textContent.trim() : (sec.dataset.section || '');
@@ -1251,10 +1319,6 @@ function initDetailNav(c) {
     items.push({ pill, sec });
     spyTargets.push(sec);
   });
-
-  const heroEl = c.querySelector('.detail-hero');
-  if (heroEl) heroEl.after(nav);
-  else c.prepend(nav);
 
   if ('IntersectionObserver' in window) {
     const spy = new IntersectionObserver((entries) => {
@@ -1283,9 +1347,6 @@ function applyLens(c, d, s) {
   const qvn = c.querySelector('#quality-vs-noise');
   if (qvn) qvn.innerHTML = qualityVsNoiseHtml(s);
 
-  const rg = c.querySelector('#rail-grade');
-  if (rg) rg.innerHTML = railGradeHtml(s);
-
   const overlay = c.querySelector('#trader-overlay');
   if (overlay) {
     if (lens === 'trader' && overlay.querySelector('.prob-dist-canvas')) {
@@ -1301,42 +1362,348 @@ function applyLens(c, d, s) {
   if (story) {
     const targetId = lens === 'trader' ? 'noise' : 'business';
     story.querySelectorAll('.story-section').forEach(sec => {
-      const open = sec.dataset.section === targetId;
-      sec.classList.toggle('open', open);
-      const btn = sec.querySelector('.story-toggle');
-      if (btn) btn.setAttribute('aria-expanded', String(open));
+      // hide noise section in investor lens; show in trader lens
+      if (sec.dataset.section === 'noise') {
+        sec.style.display = lens === 'trader' ? '' : 'none';
+      }
+      // open the lens-appropriate section
+      const open = sec.dataset.section === targetId && (lens !== 'trader' || sec.dataset.section === 'noise');
+      if (sec.dataset.section !== 'noise') {
+        sec.classList.toggle('open', open);
+        const btn = sec.querySelector('.story-toggle');
+        if (btn) btn.setAttribute('aria-expanded', String(open));
+      }
     });
   }
 }
 
 // ---------- recently viewed (localStorage) ----------
-function recordRecent(symbol) {
+function recordRecent(symbol, name) {
   try {
-    const rec = JSON.parse(localStorage.getItem('if_recent') || '[]');
-    const next = [symbol, ...rec.filter(s => s !== symbol)].slice(0, 6);
+    let rec = [];
+    try { rec = JSON.parse(localStorage.getItem('if_recent') || '[]'); } catch { rec = []; }
+    const normalized = rec.map(e => typeof e === 'string' ? { s: e, n: '' } : e).filter(e => e.s !== symbol);
+    const next = [{ s: symbol, n: name || '' }, ...normalized].slice(0, 6);
     localStorage.setItem('if_recent', JSON.stringify(next));
   } catch { /* ignore quota/security errors */ }
   renderRecent();
 }
 
 function renderRecent() {
-  const wrap = $('#recent-wrap');
-  const list = $('#recent-list');
-  if (!wrap || !list) return;
+  // Recently viewed is now consolidated to the side panel only — no Discover page card.
+  renderRecentPane();
+}
+
+// ---------- side panel: Compare / Watch / Recent ----------
+const compareState = { symbols: [], cache: new Map(), loading: new Set() };
+const watchState = { symbols: [] };
+let panelOpen = false;
+let activePane = 'compare';
+
+function loadPanelState() {
+  try {
+    const raw = JSON.parse(localStorage.getItem('if_compare') || '[]');
+    compareState.symbols = raw.filter(Boolean).slice(0, 6).map(e => typeof e === 'string' ? { s: e, n: '' } : e);
+  } catch { compareState.symbols = []; }
+  try {
+    const raw = JSON.parse(localStorage.getItem('if_watch') || '[]');
+    watchState.symbols = raw.filter(Boolean).slice(0, 30).map(e => typeof e === 'string' ? { s: e, n: '' } : e);
+  } catch { watchState.symbols = []; }
+  try { panelOpen = localStorage.getItem('if_panel') === '1'; } catch { panelOpen = false; }
+  updateCompareCount();
+}
+function saveCompare() {
+  try { localStorage.setItem('if_compare', JSON.stringify(compareState.symbols)); } catch { /* ignore */ }
+  updateCompareCount();
+}
+function saveWatch() {
+  try { localStorage.setItem('if_watch', JSON.stringify(watchState.symbols)); } catch { /* ignore */ }
+}
+function isInCompare(sym) { return compareState.symbols.some(e => e.s === sym); }
+function isWatched(sym) { return watchState.symbols.some(e => e.s === sym); }
+function addToCompare(sym, name) {
+  if (!isInCompare(sym)) compareState.symbols.push({ s: sym, n: name || '' });
+  saveCompare();
+  fetchCompareSignals(sym);
+  renderComparePane();
+}
+function removeFromCompare(sym) {
+  compareState.symbols = compareState.symbols.filter(e => e.s !== sym);
+  saveCompare();
+  renderComparePane();
+}
+function toggleWatch(sym, name) {
+  if (isWatched(sym)) watchState.symbols = watchState.symbols.filter(e => e.s !== sym);
+  else watchState.symbols.push({ s: sym, n: name || '' });
+  saveWatch();
+  renderWatchPane();
+}
+function updateCompareCount() {
+  const el = $('#panel-compare-count');
+  if (!el) return;
+  const n = compareState.symbols.length;
+  el.textContent = String(n);
+  el.hidden = n === 0;
+}
+
+// Reuse the signals endpoint — it already returns quality score, market pulse,
+// value metrics (ROE, PEG, FCF yield, debt/equity, Graham fair value), margin of
+// safety, dividends and short interest, which is exactly the comparison row we need.
+async function fetchCompareSignals(sym) {
+  if (compareState.cache.has(sym) || compareState.loading.has(sym)) return;
+  compareState.loading.add(sym);
+  try {
+    const sg = await getJSONWithTimeout('/api/signals/' + encodeURIComponent(sym), 20000);
+    if (sg) compareState.cache.set(sym, sg);
+    // fill in company name from signals response if we don't have it yet
+    const entry = compareState.symbols.find(e => e.s === sym);
+    if (entry && !entry.n && sg?.name) { entry.n = sg.name; saveCompare(); }
+  } catch { /* leave uncached; render shows "loading" */ }
+  finally { compareState.loading.delete(sym); }
+  if (activePane === 'compare') renderComparePane();
+}
+
+function compareRow(sg) {
+  if (!sg) return null;
+  return {
+    price: sg.price ?? null,
+    quality: sg.score?.value ?? null,
+    pulse: sg.marketPulse?.value ?? null,
+    mos: sg.marginOfSafety?.mosPct ?? null,
+    roe: sg.value?.roe ?? null,
+    peg: sg.value?.peg ?? null,
+    fcf: sg.value?.fcfYield ?? null,
+    de: sg.value?.debtToEquity ?? null,
+    dy: sg.dividends?.yield ?? null,
+    short: sg.shortInterest?.shortPercentOfFloat ?? null,
+  };
+}
+
+const COMPARE_METRICS = [
+  { key: 'price', label: 'Price', fmt: v => v == null ? '—' : fmtMoney(v) },
+  { key: 'quality', label: 'Quality', fmt: v => v == null ? '—' : (v > 0 ? '+' : '') + v, hint: 'Blend of fundamentals only: analyst consensus, revenue/earnings trend, insider buying, growth estimates.' },
+  { key: 'pulse', label: 'Market pulse', fmt: v => v == null ? '—' : (v > 0 ? '+' : '') + v, hint: 'Short-term crowd and options noise — context, not part of the long-term verdict.' },
+  { key: 'mos', label: 'Margin of safety', fmt: v => v == null ? '—' : (v > 0 ? '+' : '') + v + '%', hint: 'How far today\'s price sits below Graham fair value. Positive = a cushion if you\'re wrong.' },
+  { key: 'roe', label: 'ROE', fmt: v => v == null ? '—' : (v * 100).toFixed(1) + '%', hint: 'Return on equity — profit per dollar of shareholder money. 15%+ is generally strong.' },
+  { key: 'peg', label: 'PEG', fmt: v => v == null ? '—' : v, hint: 'Price/Earnings ÷ expected growth. Under 1 = cheap growth; over 2 = expensive.' },
+  { key: 'fcf', label: 'FCF yield', fmt: v => v == null ? '—' : v + '%', hint: 'Free cash flow ÷ market value. 4%+ is healthy.' },
+  { key: 'de', label: 'Debt/Equity', fmt: v => v == null ? '—' : v.toFixed(2), hint: 'Total debt ÷ shareholder equity. Under 1 is conservative; over 2 is a warning.' },
+  { key: 'dy', label: 'Div yield', fmt: v => v == null ? '—' : (v * 100).toFixed(2) + '%', hint: 'Annual dividend as a share of the price.' },
+  { key: 'short', label: 'Short % float', fmt: v => v == null ? '—' : (v * 100).toFixed(1) + '%', hint: 'Share of stock sold short. High % = heavy bearish positioning or squeeze potential.' },
+];
+
+function renderComparePane() {
+  const pane = $('#pane-compare');
+  if (!pane) return;
+  const entries = compareState.symbols;
+  if (!entries.length) {
+    pane.innerHTML = `<div class="side-empty">
+      <p class="side-empty-title">Compare businesses side by side</p>
+      <p class="muted">Open a report and hit <strong>＋ Compare</strong> to build a fundamentals table — quality, margin of safety, ROE, debt and more.</p>
+    </div>`;
+    return;
+  }
+  entries.forEach(e => { if (!compareState.cache.has(e.s)) fetchCompareSignals(e.s); });
+
+  const rows = entries.map(e => compareState.cache.get(e.s));
+  const headCells = entries.map(e => {
+    const name = e.n || e.s;
+    return `<th class="cmp-col">
+      <button class="cmp-sym" data-open="${e.s}" title="Open ${e.s}">${e.s}</button>
+      <div class="cmp-name">${name}</div>
+      <button class="cmp-remove" data-remove="${e.s}" title="Remove ${e.s}" aria-label="Remove ${e.s}">×</button>
+    </th>`;
+  }).join('');
+
+  const body = COMPARE_METRICS.map(m => {
+    const cells = entries.map((e, i) => {
+      const sg = rows[i];
+      const row = sg ? compareRow(sg) : null;
+      const val = row ? row[m.key] : null;
+      if (sg && row && val == null) return `<td class="cmp-val muted">—</td>`;
+      if (!sg) return `<td class="cmp-val"><span class="skeleton skeleton-line" style="display:inline-block;width:60%;height:11px;"></span></td>`;
+      return `<td class="cmp-val">${m.fmt(val)}</td>`;
+    }).join('');
+    return `<tr><th class="cmp-metric"${m.hint ? ` title="${m.hint}"` : ''}>${m.label}</th>${cells}</tr>`;
+  }).join('');
+
+  pane.innerHTML = `
+    <div class="side-hint caption">Fundamentals only — long-term view. Trader noise is excluded by design.</div>
+    <div class="cmp-table-wrap">
+      <table class="cmp-table">
+        <thead><tr><th class="cmp-metric"></th>${headCells}</tr></thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>
+    <div class="side-foot">
+      <button class="side-link" id="cmp-copy" type="button">Copy table</button>
+      <button class="side-link" id="cmp-clear" type="button">Clear all</button>
+    </div>`;
+
+  pane.querySelectorAll('.cmp-sym').forEach(b => b.addEventListener('click', () => openDetail(b.dataset.open)));
+  pane.querySelectorAll('.cmp-remove').forEach(b => b.addEventListener('click', () => removeFromCompare(b.dataset.remove)));
+  const copyBtn = pane.querySelector('#cmp-copy');
+  if (copyBtn) copyBtn.addEventListener('click', () => copyCompareTable(entries, rows));
+  const clearBtn = pane.querySelector('#cmp-clear');
+  if (clearBtn) clearBtn.addEventListener('click', () => { compareState.symbols = []; compareState.cache.clear(); saveCompare(); renderComparePane(); });
+}
+
+function copyCompareTable(entries, rows) {
+  const lines = ['Symbol,' + entries.map(e => e.s).join(',')];
+  COMPARE_METRICS.forEach(m => {
+    const vals = entries.map((e, i) => {
+      const r = rows[i] ? compareRow(rows[i]) : null;
+      return r ? (r[m.key] == null ? '' : r[m.key]) : '';
+    });
+    lines.push(m.label + ',' + vals.join(','));
+  });
+  navigator.clipboard?.writeText(lines.join('\n')).catch(() => {});
+  const btn = $('#cmp-copy');
+  if (btn) { btn.textContent = '✓ Copied'; setTimeout(() => { btn.textContent = 'Copy table'; }, 1800); }
+}
+
+function renderWatchPane() {
+  const pane = $('#pane-watch');
+  if (!pane) return;
+  const entries = watchState.symbols;
+  if (!entries.length) {
+    pane.innerHTML = `<div class="side-empty">
+      <p class="side-empty-title">Your watchlist</p>
+      <p class="muted">Hit <strong>★ Watch</strong> on any report to pin it here for quick access.</p>
+    </div>`;
+    return;
+  }
+  pane.innerHTML = `<ul class="side-list">${entries.map(e => {
+    const name = e.n || '';
+    return `<li class="side-list-row">
+      <button class="side-list-open" data-open="${e.s}"><span class="side-list-sym">${e.s}</span>${name ? `<span class="side-list-name">${name}</span>` : ''}</button>
+      <button class="side-list-remove" data-remove="${e.s}" aria-label="Unwatch ${e.s}">×</button>
+    </li>`;
+  }).join('')}</ul>`;
+  pane.querySelectorAll('.side-list-open').forEach(b => b.addEventListener('click', () => openDetail(b.dataset.open)));
+  pane.querySelectorAll('.side-list-remove').forEach(b => b.addEventListener('click', () => toggleWatch(b.dataset.remove)));
+}
+
+function renderRecentPane() {
+  const pane = $('#pane-recent');
+  if (!pane) return;
   let rec = [];
   try { rec = JSON.parse(localStorage.getItem('if_recent') || '[]'); } catch { rec = []; }
-  if (!rec.length) { wrap.style.display = 'none'; return; }
-  wrap.style.display = '';
-  list.innerHTML = '';
-  rec.forEach(sym => {
-    const el = document.createElement('div');
-    el.className = 'mini-row';
-    el.innerHTML =
-      `<div><div class="sym">${sym}</div></div>` +
-      `<div class="meta num text-right">view report</div>`;
-    el.addEventListener('click', () => openDetail(sym));
-    list.appendChild(el);
+  if (!rec.length) {
+    pane.innerHTML = `<div class="side-empty">
+      <p class="side-empty-title">Recently viewed</p>
+      <p class="muted">Reports you open will appear here.</p>
+    </div>`;
+    return;
+  }
+  pane.innerHTML = `<ul class="side-list">${rec.map(e => {
+    const entry = typeof e === 'string' ? { s: e, n: '' } : e;
+    const name = entry.n || '';
+    return `<li class="side-list-row">
+      <button class="side-list-open" data-open="${entry.s}"><span class="side-list-sym">${entry.s}</span>${name ? `<span class="side-list-name">${name}</span>` : ''}</button>
+    </li>`;
+  }).join('')}</ul>`;
+  pane.querySelectorAll('.side-list-open').forEach(b => b.addEventListener('click', () => openDetail(b.dataset.open)));
+}
+
+function renderActivePane() {
+  if (activePane === 'compare') renderComparePane();
+  else if (activePane === 'watch') renderWatchPane();
+  else renderRecentPane();
+}
+
+function openPanel(tab) {
+  if (tab) { activePane = tab; }
+  panelOpen = true;
+  try { localStorage.setItem('if_panel', '1'); } catch { /* ignore */ }
+  const panel = $('#side-panel');
+  const scrim = $('#panel-scrim');
+  const toggle = $('#panel-toggle');
+  if (panel) { panel.classList.add('open'); panel.setAttribute('aria-hidden', 'false'); }
+  if (scrim) scrim.hidden = false;
+  if (toggle) { toggle.setAttribute('aria-expanded', 'true'); toggle.classList.add('hidden'); }
+  $$('.side-tab').forEach(t => {
+    const on = t.dataset.tab === activePane;
+    t.classList.toggle('active', on);
+    t.setAttribute('aria-selected', String(on));
   });
+  $$('.side-pane').forEach(p => p.classList.toggle('active', p.id === 'pane-' + activePane));
+  renderActivePane();
+}
+function closePanel() {
+  panelOpen = false;
+  try { localStorage.setItem('if_panel', '0'); } catch { /* ignore */ }
+  const panel = $('#side-panel');
+  const scrim = $('#panel-scrim');
+  const toggle = $('#panel-toggle');
+  if (panel) { panel.classList.remove('open'); panel.setAttribute('aria-hidden', 'true'); }
+  if (scrim) scrim.hidden = true;
+  if (toggle) { toggle.setAttribute('aria-expanded', 'false'); toggle.classList.remove('hidden'); }
+}
+function initSidePanel() {
+  loadPanelState();
+  const toggle = $('#panel-toggle');
+  const close = $('#panel-close');
+  const scrim = $('#panel-scrim');
+  if (toggle) toggle.addEventListener('click', () => { if (panelOpen) closePanel(); else openPanel(); });
+  if (close) close.addEventListener('click', closePanel);
+  if (scrim) scrim.addEventListener('click', closePanel);
+  $$('.side-tab').forEach(tab => tab.addEventListener('click', () => {
+    activePane = tab.dataset.tab;
+    $$('.side-tab').forEach(t => { const on = t === tab; t.classList.toggle('active', on); t.setAttribute('aria-selected', String(on)); });
+    $$('.side-pane').forEach(p => p.classList.toggle('active', p.id === 'pane-' + activePane));
+    renderActivePane();
+  }));
+  if (panelOpen) openPanel();
+}
+
+// ---------- plain-English glossary (progressive disclosure for novices) ----------
+function showToast(msg, ms) {
+  let t = document.getElementById('app-toast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = 'app-toast';
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.classList.remove('show'), ms || 2200);
+}
+
+const GLOSSARY = [
+  ['Quality score', 'A -100 to +100 blend of fundamentals only: analyst consensus, revenue/earnings trend, insider buying, and growth estimates. Higher = stronger long-term business quality.'],
+  ['Market pulse', 'Short-term crowd and options noise (retail sentiment, options flow, news tone). It is context, not part of the long-term verdict.'],
+  ['Margin of safety', 'How far the price sits below a rough intrinsic-value estimate (Graham fair value). Positive = a cushion if your thesis is wrong.'],
+  ['ROE', 'Return on equity — profit generated per dollar of shareholder money. 15%+ is generally strong.'],
+  ['PEG', 'Price/Earnings ÷ expected growth. Under 1 suggests growth is cheap; over 2 suggests it is expensive.'],
+  ['FCF yield', 'Free cash flow ÷ market value — the cash the business throws off. 4%+ is healthy.'],
+  ['Debt/equity', 'Total debt ÷ shareholder equity. Under 1 is conservative; over 2 is a warning.'],
+  ['P/E', 'Price ÷ trailing earnings. Lower can mean cheaper — but always compare within the same sector.'],
+  ['Graham fair value', 'A back-of-envelope intrinsic value: EPS × (8.5 + 2×expected growth). A rough anchor, not a price target.'],
+  ['Short interest', 'Share of stock sold short (betting it falls). A high % signals heavy bearish positioning or a possible squeeze.'],
+  ['Owner earnings', "Buffett's idea: the real cash a business generates that could be paid to owners, not just reported profit."],
+];
+
+function initGlossary() {
+  let modal = document.getElementById('glossary-modal');
+  if (modal) return;
+  modal = document.createElement('div');
+  modal.id = 'glossary-modal';
+  modal.className = 'modal-scrim hidden';
+  modal.innerHTML = `<div class="modal-card" role="dialog" aria-modal="true" aria-label="Glossary">
+      <div class="modal-head"><h3>Plain-English glossary</h3><button class="modal-close" aria-label="Close">×</button></div>
+      <div class="modal-body" id="glossary-body"></div>
+    </div>`;
+  document.body.appendChild(modal);
+  modal.querySelector('.modal-close').addEventListener('click', () => modal.classList.add('hidden'));
+  modal.addEventListener('click', e => { if (e.target === modal) modal.classList.add('hidden'); });
+  const body = modal.querySelector('#glossary-body');
+  body.innerHTML = GLOSSARY.map(([t, d]) => `<div class="gloss-row"><div class="gloss-term">${t}</div><div class="gloss-def">${d}</div></div>`).join('');
+}
+function openGlossary() {
+  const modal = document.getElementById('glossary-modal');
+  if (modal) modal.classList.remove('hidden');
 }
 
 // ---------- overview ----------
@@ -1381,30 +1748,75 @@ async function loadOverview() {
   if (!status) return;
   status.textContent = 'Loading market overview…';
   status.classList.add('loading');
-  ['ov-stock-gainers', 'ov-stock-losers', 'ov-etf-gainers', 'ov-etf-losers', 'ov-crypto'].forEach(id => {
-    const r = document.getElementById(id);
-    if (r) r.innerHTML = skelMiniRows(5);
-  });
+  const moversList = document.getElementById('ov-movers-list');
+  if (moversList) moversList.innerHTML = skelMiniRows(5);
   try {
     const d = await getJSON('/api/overview');
     if (d.degraded) status.className = 'status warn';
     status.textContent = d.degraded
       ? 'Partial data (some sources unavailable). Showing what we have.'
       : 'Updated ' + new Date(d.updatedAt).toLocaleTimeString();
-    fill('ov-stock-gainers', d.stocks.gainers);
-    fill('ov-stock-losers', d.stocks.losers);
-    fill('ov-etf-gainers', d.etfs.gainers);
-    fill('ov-etf-losers', d.etfs.losers);
-    const cr = $('#ov-crypto');
-    if (cr) {
-      cr.innerHTML = '';
-      (d.crypto || []).forEach((c) => cr.appendChild(cryptoRow(c)));
-    }
+
+    // Store data for tabbed movers
+    window._overviewData = d;
+
+    // Show default view: Stock Gainers
+    fillMovers('stocks', 'gainers');
     status.classList.remove('loading');
   } catch (e) {
     status.className = 'status warn';
     status.textContent = 'Failed to load overview: ' + e.message;
     status.classList.remove('loading');
+  }
+}
+
+// Consolidated tabbed movers: Stocks/ETFs × Gainers/Losers
+let currentMoversAsset = 'stocks';
+let currentMoversDir = 'gainers';
+
+function fillMovers(asset, dir) {
+  const d = window._overviewData;
+  if (!d) return;
+  currentMoversAsset = asset;
+  currentMoversDir = dir;
+  const list = document.getElementById('ov-movers-list');
+  if (!list) return;
+  let data;
+  if (asset === 'stocks') {
+    data = dir === 'gainers' ? d.stocks?.gainers : d.stocks?.losers;
+  } else {
+    data = dir === 'gainers' ? d.etfs?.gainers : d.etfs?.losers;
+  }
+  list.innerHTML = '';
+  if (!data || !data.length) {
+    list.innerHTML = '<p class="muted caption" style="padding:var(--space-2);">No data.</p>';
+    return;
+  }
+  data.forEach((q) => list.appendChild(miniRow(q)));
+}
+
+function initMoversTabs() {
+  const assetToggle = document.getElementById('movers-asset-toggle');
+  const dirToggle = document.getElementById('movers-dir-toggle');
+  if (assetToggle) {
+    assetToggle.querySelectorAll('.seg-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        assetToggle.querySelectorAll('.seg-btn').forEach(b => { b.classList.remove('active'); b.setAttribute('aria-selected', 'false'); });
+        btn.classList.add('active');
+        btn.setAttribute('aria-selected', 'true');
+        fillMovers(btn.dataset.asset, currentMoversDir);
+      });
+    });
+  }
+  if (dirToggle) {
+    dirToggle.querySelectorAll('.seg-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        dirToggle.querySelectorAll('.seg-btn').forEach(b => { b.classList.remove('active'); b.setAttribute('aria-selected', 'false'); });
+        btn.classList.add('active');
+        btn.setAttribute('aria-selected', 'true');
+        fillMovers(currentMoversAsset, btn.dataset.dir);
+      });
+    });
   }
 }
 
@@ -1625,10 +2037,17 @@ async function loadFgStrip() {
     const d = await getJSON('/api/market/sentiment');
     if (d.degraded) { el.style.display = 'none'; return; }
     let html = '';
+    let moodText = '';
     if (d.usFearGreed) {
       const ug = d.usFearGreed;
       const cls = ug.score <= 25 ? 'up' : ug.score >= 75 ? 'down' : '';
       html += `<span class="fg-item"><span class="fg-label">Market F&G</span><span class="${cls}">${ug.score}</span></span>`;
+      // Plain-English market mood
+      if (ug.score <= 25) moodText = 'Markets are fearful today — historically a buying signal.';
+      else if (ug.score <= 45) moodText = 'Markets lean cautious — worth watching closely.';
+      else if (ug.score <= 55) moodText = 'Markets are neutral — no strong signal either way.';
+      else if (ug.score <= 75) moodText = 'Markets are greedy — proceed with caution.';
+      else moodText = 'Markets are extremely greedy — historically a caution signal.';
     }
     if (d.vix) {
       const cls = d.vix.score > 60 ? 'down' : d.vix.score < 40 ? 'up' : '';
@@ -1647,7 +2066,7 @@ async function loadFgStrip() {
       html += `<span class="fg-item"><span class="fg-label">DXY</span><span class="${cls}">${fmtPct(macro.dollar.changePct)}</span></span>`;
     }
     if (html) {
-      el.innerHTML = html;
+      el.innerHTML = (moodText ? `<div class="fg-mood">${moodText}</div>` : '') + `<div class="fg-items">${html}</div>`;
       el.style.display = '';
     } else {
       el.style.display = 'none';
@@ -1778,7 +2197,6 @@ function showDetail() {
 async function openDetail(symbol, pushState) {
   if (pushState !== false) history.pushState({ symbol }, '', '/s/' + symbol);
   showDetail();
-  recordRecent(symbol);
   const c = $('#detail-content');
   c.innerHTML = '<div style="padding:48px 0;"><div class="skeleton skeleton-line w60"></div><div class="skeleton skeleton-line w80"></div><div class="skeleton skeleton-block"></div></div>';
 
@@ -1794,6 +2212,7 @@ async function openDetail(symbol, pushState) {
     detailData = await detailP;
     if (!detailData) throw new Error('timeout');
     renderDetailFast(c, detailData, symbol);
+    recordRecent(symbol, detailData.name);
   } catch (e) {
     c.innerHTML = `<div style="padding:48px 0;"><p class="muted">Failed to load ${symbol}: ${e.message}</p></div>`;
     return;
@@ -1855,7 +2274,7 @@ document.addEventListener('change', async (e) => {
   }
 });
 
-// recently-viewed clear
+// recently-viewed clear (legacy handler — button may not exist in new layout)
 const recentClearBtn = $('#recent-clear');
 if (recentClearBtn) {
   recentClearBtn.addEventListener('click', () => {
@@ -1866,6 +2285,9 @@ if (recentClearBtn) {
 
 (function boot() {
   renderRecent();
+  initSidePanel();
+  initGlossary();
+  initMoversTabs();
   const sym = parseSymbolFromPath();
   if (sym) {
     openDetail(sym, false);

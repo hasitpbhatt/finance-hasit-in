@@ -10,6 +10,7 @@ import { getOptionChain, getOptionChainLimited, computeOptionSignals, getQuotes,
 import { getCboeOptionChain } from '../../lib/cboe.js';
 import { getXbrlTrend } from '../../lib/xbrl.js';
 import { getRetailSentiment } from '../../lib/stocktwits.js';
+import { getEarnings, getRecommendations, getCompanyNews } from '../../lib/finnhub.js';
 import { json, corsPreflight } from '../../lib/http.js';
 import { retryFetch } from '../../lib/cache.js';
 
@@ -369,6 +370,7 @@ async function handleSignals(request, params) {
     quote = quotes[0] || null;
     companyName = quote?.name || '';
     if (quote?.price != null) result.price = quote.price;
+    result.name = companyName || symbol;
   } catch { /* not critical */ }
 
   // Each source gets its own AbortController so a deadline miss actually stops
@@ -393,7 +395,7 @@ async function handleSignals(request, params) {
     xbrl: 4500,
   };
 
-  const [insiderR, newsIntelR, leadershipR, hiringR, optionsR, analystR, retailR, xbrlR] = await Promise.allSettled([
+  const [insiderR, newsIntelR, leadershipR, hiringR, optionsR, analystR, retailR, xbrlR, fhEarningsR, fhRecsR, fhNewsR] = await Promise.allSettled([
     withTimeout(getInsiderTrades(symbol, 5, src()), TIMEOUTS.insider, controllers[controllers.length - 1]),
     withTimeout(getNewsIntel(symbol, companyName, src()), TIMEOUTS.newsIntel, controllers[controllers.length - 1]),
     withTimeout(getLeadershipChanges(symbol, 12, process.env, src()), TIMEOUTS.leadership, controllers[controllers.length - 1]),
@@ -426,6 +428,12 @@ async function handleSignals(request, params) {
     withTimeout(getRetailSentiment(symbol, src()), TIMEOUTS.retail, controllers[controllers.length - 1]),
     // XBRL fundamentals trend
     withTimeout(getXbrlTrend(symbol, src()), TIMEOUTS.xbrl, controllers[controllers.length - 1]),
+    // Finnhub: earnings surprises
+    withTimeout(getEarnings(symbol, process.env, src()), 3000, controllers[controllers.length - 1]),
+    // Finnhub: analyst recommendations
+    withTimeout(getRecommendations(symbol, process.env, src()), 3000, controllers[controllers.length - 1]),
+    // Finnhub: company news
+    withTimeout(getCompanyNews(symbol, process.env, src()), 4000, controllers[controllers.length - 1]),
   ]);
 
   // --- Insider ---
@@ -550,6 +558,75 @@ async function handleSignals(request, params) {
   } else {
     result.xbrl = { available: false, reason: 'error' };
     result.errors.push('xbrl: ' + (xbrlR.reason?.message || 'timeout'));
+  }
+
+  // --- Finnhub: earnings surprises (enhance Yahoo earnings data) ---
+  if (fhEarningsR.status === 'fulfilled' && fhEarningsR.value?.available) {
+    const fh = fhEarningsR.value;
+    // Merge Finnhub surprise history into result.earnings if Yahoo didn't provide it
+    if (!result.earnings?.available || !result.earnings.surpriseHistory?.length) {
+      result.earnings = {
+        available: true,
+        nextDate: result.earnings?.nextDate || null,
+        epsEstimate: result.earnings?.epsEstimate ?? null,
+        beatStreak: result.earnings?.beatStreak ?? 0,
+        surpriseHistory: fh.quarters.map(q => ({
+          quarter: q.quarter, year: q.year,
+          epsActual: q.epsActual, epsEstimate: q.epsEstimate,
+          surprisePercent: q.surprisePercent,
+        })),
+      };
+    }
+    // Recompute beat streak from Finnhub data if it's richer
+    if (fh.quarters.length > 0) {
+      let streak = 0;
+      for (const q of fh.quarters) {
+        if (q.epsActual != null && q.epsEstimate != null && q.epsActual >= q.epsEstimate) streak++;
+        else break;
+      }
+      if (streak > (result.earnings?.beatStreak || 0)) {
+        result.earnings.beatStreak = streak;
+      }
+    }
+  }
+
+  // --- Finnhub: analyst recommendations (cross-validate Yahoo) ---
+  if (fhRecsR.status === 'fulfilled' && fhRecsR.value?.available) {
+    result.finnhubRecommendations = fhRecsR.value;
+  }
+
+  // --- Finnhub: company news (merge into newsIntel) ---
+  if (fhNewsR.status === 'fulfilled' && fhNewsR.value?.available) {
+    const fhArticles = fhNewsR.value.articles || [];
+    if (result.newsIntel?.available && result.newsIntel.articles?.length) {
+      // Merge: dedupe by title similarity, keep existing sentiment scores
+      const existing = new Set(result.newsIntel.articles.map(a => a.title?.toLowerCase().slice(0, 40)));
+      for (const a of fhArticles) {
+        const key = a.headline?.toLowerCase().slice(0, 40);
+        if (key && !existing.has(key)) {
+          result.newsIntel.articles.push({
+            title: a.headline, link: a.url, pubDate: a.published,
+            source: a.source, domain: '', sentiment: 0, topics: [], weight: 0.7,
+          });
+          existing.add(key);
+        }
+      }
+      result.newsIntel.count = result.newsIntel.articles.length;
+    } else {
+      // No existing news — use Finnhub as the source
+      result.newsIntel = {
+        available: true,
+        count: fhArticles.length,
+        avgSentiment: 0,
+        trend: 0,
+        spike: fhArticles.length >= 8,
+        topics: [],
+        articles: fhArticles.map(a => ({
+          title: a.headline, link: a.url, pubDate: a.published,
+          source: a.source, domain: '', sentiment: 0, topics: [], weight: 0.7,
+        })),
+      };
+    }
   }
 
   // --- Signal flags ---

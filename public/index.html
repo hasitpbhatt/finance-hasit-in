@@ -24,9 +24,18 @@
       </div>
 
       <nav class="tabs">
-        <button class="tab active" data-tab="overview">Discover</button>
-        <button class="tab" data-tab="screener">Research</button>
-        <button class="tab" data-tab="crypto">Crypto</button>
+        <button class="tab active" data-tab="overview">
+          <svg class="tab-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"></polygon></svg>
+          Discover
+        </button>
+        <button class="tab" data-tab="screener">
+          <svg class="tab-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></svg>
+          Research
+        </button>
+        <button class="tab" data-tab="crypto">
+          <svg class="tab-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M9 8h4a2 2 0 1 1 0 4H9V8z"></path><path d="M9 12h4.5a2 2 0 1 1 0 4H9v-4z"></path><line x1="11" y1="6" x2="11" y2="8"></line><line x1="13" y1="6" x2="13" y2="8"></line><line x1="11" y1="16" x2="11" y2="18"></line><line x1="13" y1="16" x2="13" y2="18"></line></svg>
+          Crypto
+        </button>
       </nav>
     </header>
 
@@ -35,34 +44,25 @@
       <section id="overview" class="panel active">
         <div id="fg-strip" class="fg-strip" style="display:none;"></div>
         <div id="overview-status" class="status"></div>
-        <div id="recent-wrap" class="card" style="display:none;">
-          <div class="recent-head">
-            <h2>Recently viewed</h2>
-            <button class="filters-toggle" id="recent-clear">Clear</button>
+        
+        <div class="card movers-card">
+          <div class="movers-header">
+            <div>
+              <h2>Market Movers</h2>
+              <div class="caption">Top percentage movers updated in real time</div>
+            </div>
+            <div class="movers-controls">
+              <div class="segmented-control" id="movers-asset-toggle" role="tablist" aria-label="Asset type">
+                <button class="seg-btn active" data-asset="stocks" role="tab" aria-selected="true">Stocks</button>
+                <button class="seg-btn" data-asset="etfs" role="tab" aria-selected="false">ETFs</button>
+              </div>
+              <div class="segmented-control" id="movers-dir-toggle" role="tablist" aria-label="Movement direction">
+                <button class="seg-btn active" data-dir="gainers" role="tab" aria-selected="true">Gainers</button>
+                <button class="seg-btn" data-dir="losers" role="tab" aria-selected="false">Losers</button>
+              </div>
+            </div>
           </div>
-          <div id="recent-list" class="mini-list"></div>
-        </div>
-        <div class="grid-2">
-          <div class="card">
-            <h2>Stock Gainers</h2>
-            <div id="ov-stock-gainers" class="mini-list"></div>
-          </div>
-          <div class="card">
-            <h2>Stock Losers</h2>
-            <div id="ov-stock-losers" class="mini-list"></div>
-          </div>
-          <div class="card">
-            <h2>ETF Gainers</h2>
-            <div id="ov-etf-gainers" class="mini-list"></div>
-          </div>
-          <div class="card">
-            <h2>ETF Losers</h2>
-            <div id="ov-etf-losers" class="mini-list"></div>
-          </div>
-        </div>
-        <div class="card">
-          <h2>Crypto Movers (24h)</h2>
-          <div id="ov-crypto" class="mini-list"></div>
+          <div id="ov-movers-list" class="mini-list"></div>
         </div>
       </section>
 
@@ -146,6 +146,26 @@
     <footer class="site-footer">
       <p>Data: Yahoo Finance, SEC EDGAR, CoinGecko, StockTwits (free, no key). For educational use only — not investment advice.</p>
     </footer>
+
+    <!-- SIDE PANEL: Compare / Watchlist -->
+    <button id="panel-toggle" class="panel-toggle" aria-label="Open side panel" aria-expanded="false">
+      <span class="panel-toggle-count" id="panel-compare-count" hidden>0</span>
+      <span class="panel-toggle-icon">☰</span><span class="panel-toggle-label"> Compare</span>
+    </button>
+    <div id="panel-scrim" class="panel-scrim" hidden></div>
+    <aside id="side-panel" class="side-panel" aria-hidden="true">
+      <div class="side-panel-head">
+        <div class="side-tabs" role="tablist" aria-label="Side panel views">
+          <button class="side-tab active" data-tab="compare" role="tab" aria-selected="true">Compare</button>
+          <button class="side-tab" data-tab="watch" role="tab" aria-selected="false">Watch</button>
+        </div>
+        <button id="panel-close" class="panel-close" aria-label="Close side panel" title="Close">×</button>
+      </div>
+      <div class="side-panel-body">
+        <div class="side-pane active" id="pane-compare"></div>
+        <div class="side-pane" id="pane-watch"></div>
+      </div>
+    </aside>
 
     <script src="/app.js"></script>
   </body>

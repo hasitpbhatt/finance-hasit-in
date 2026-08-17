@@ -74,13 +74,13 @@ Primary entry is search `/` or `/s/:symbol`. Detail pages are shareable, SEO-fri
 ## UX Rules — Do Not Regress
 
 Verdict page is three zones:
-A) **Verdict strip** — radial score dial + grade + factor chips + Quality-vs-Market-pulse chips + persona switcher + plain copy + copy button.
-B) **Price chart** — 1M/3M/6M/1Y/ALL, RSI/SMA50/SMA200, hover tooltip for price.
+A) **Price chart** — 1M/3M/6M/1Y/ALL, RSI/SMA50/SMA200, hover tooltip for price. Rendered before verdict strip.
+B) **Verdict strip** — radial score dial + grade + factor chips + Quality-vs-Market-pulse chips + persona switcher + plain copy + copy button.
 C) **Story content** — persistent left rail desktop ≥1024px, sticky pill bar mobile. Synced controls.
 
 Score is two lenses: **Quality score** = fundamentals. **Market pulse** = options/retail noise.
 
-- "Most likely price" = today's price. Bell curve replaced by hover tooltip.
+- Bell curve visual removed from primary page. Probability narrative is plain English in Market pulse.
 - Persona feature: one Mistral call returns `summary` + 6 takes; frontend swaps client-side. Buffett default for Investor lens.
 - Detail charts: `2y` daily + `max` quarterly.
 - Value Lens: API returns `buffettMetrics`. UI shows plain-English synthesis first, chips second.

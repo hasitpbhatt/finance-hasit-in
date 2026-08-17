@@ -524,7 +524,6 @@ function chartHtml(d) {
       <div class="chart-range">
         ${ranges.map(r => `<button class="chart-range-btn${r === '1Y' ? ' active' : ''}" data-range="${r}">${r}</button>`).join('')}
       </div>
-      <div class="trader-overlay" id="trader-overlay" hidden></div>
     </div>`;
 }
 
@@ -777,10 +776,20 @@ function marketNoiseContent(s, symbol) {
     html += `<div class="contrarian-note">The crowd is leaning hard <strong>${lean}</strong>. Crowds this one-sided have historically been a <em>fade</em> — treat as risk, not confirmation.</div>`;
   }
 
-  // options — details only (the bell-curve overlay lives on the chart in the Trader lens)
+  // options — details with expiry selector in Market pulse
   if (s.options?.available && s.options.signals?.available) {
     const oSig = s.options.signals;
-    if (oSig.expiryDate) {
+    const exps = s.options.expirations || [];
+    if (exps.length) {
+      const now = Date.now();
+      const opts = exps.map(e => {
+        const dte = Math.max(1, Math.round((e.epoch*1000 - now)/86400000));
+        const label = `${e.date} · ~${dte}d`;
+        const isSel = e.date === oSig.expiryDate;
+        return `<option value="${e.date}"${isSel?' selected':''}>${label}</option>`;
+      }).join('');
+      html += `<div class="options-date-row"><label>Options expiry</label><select class="options-expiry" data-symbol="${encodeURIComponent(symbol)}">${opts}</select></div>`;
+    } else if (oSig.expiryDate) {
       html += `<div class="options-expiry-line caption">Options expiring <strong>${oSig.expiryDate}</strong>${oSig.dte != null ? ` · ${oSig.dte} days to expiry` : ''}</div>`;
     }
     html += optionsDetailsHtml(s.options, symbol);
@@ -1184,25 +1193,15 @@ function renderSignals(c, d, s) {
   ].filter(sec => sec.content.trim() !== '');
 
   // always-visible verdict strip (dial + plain sentence + Quality-vs-Noise + lens toggle)
+  const chartZone = c.querySelector('#detail-chart-zone');
   const heroEl = c.querySelector('.detail-hero');
-  if (heroEl && !c.querySelector('.verdict-strip')) {
-    heroEl.insertAdjacentHTML('afterend', verdictStripHtml(d, s));
+  const anchor = chartZone || heroEl;
+  if (anchor && !c.querySelector('.verdict-strip')) {
+    anchor.insertAdjacentHTML('afterend', verdictStripHtml(d, s));
   }
 
-  // Trader overlay — lives in the chart zone (Zone B), hidden in Investor lens.
-  const overlay = c.querySelector('#trader-overlay');
-  if (overlay) {
-    const probHtml = probabilityBlockHtml(s.options, d.symbol, d);
-    overlay.innerHTML = probHtml;
-    const hasProb = !!overlay.querySelector('.prob-dist-canvas');
-    if (currentLens() === 'trader' && hasProb) {
-      overlay.hidden = false;
-      const pc = overlay.querySelector('.prob-dist-canvas');
-      if (pc) requestAnimationFrame(() => drawProbabilityDistribution(pc));
-    } else {
-      overlay.hidden = true;
-    }
-  }
+  // Trader overlay removed from primary chart zone — bell curve demoted per Jobs minimalism.
+  // Probability details remain available in Options deep-dive / Market pulse section.
 
   // Render left-rail navigation + single content pane
   let persistedId = null;
@@ -2373,14 +2372,20 @@ document.addEventListener('change', async (e) => {
     if (!data.available || !data.signals) throw new Error('no options data');
     const optsObj = { currentPrice: data.currentPrice, expirations: data.expirations, signals: data.signals, available: true, optionsNarrative: data.optionsNarrative };
     if (overlay) {
-      overlay.innerHTML = probabilityBlockHtml(optsObj, symbol);
+      const html = probabilityBlockHtml(optsObj, symbol);
+      overlay.innerHTML = html ? html : `<div class="caption muted" style="padding:var(--space-2) 0;">No probability data for this expiry — insufficient IV.</div>`;
       overlay.style.opacity = '1';
-      if (!overlay.hidden) requestAnimationFrame(() => drawProbabilityDistribution(overlay.querySelector('.prob-dist-canvas')));
+      if (!overlay.hidden) {
+        const canvas = overlay.querySelector('.prob-dist-canvas');
+        if (canvas) requestAnimationFrame(() => drawProbabilityDistribution(canvas));
+      }
     }
     if (details) { details.innerHTML = optionsDetailsHtml(optsObj, symbol); details.style.opacity = '1'; }
   } catch (err) {
     if (overlay) { overlay.style.opacity = '1'; overlay.innerHTML = '<p class="muted caption" style="padding:var(--space-2) 0;">Could not load options for this date.</p>'; }
     if (details) details.style.opacity = '1';
+  } finally {
+    sel.disabled = false;
   }
 });
 

@@ -42,11 +42,12 @@ This document maps the codebase structure, data flow, and key gotchas so future 
 
 ### 3. Frontend rendering (`public/app.js`)
 
-- **`renderSignals(c, d, s)`** (line 1150): builds the detail page — verdict strip, trader overlay (bell curve + date selector), story sections (business, quality, value, growth, price, ownership, watchouts, news, noise/market pulse).
-- **`probabilityBlockHtml(o, symbol)`** (line 818): renders the bell curve canvas, probability legend, and the "Look at" `<select class="options-expiry">` dropdown with all expirations. Canvas gets `data-price` and `data-sigma`; `drawProbabilityDistribution` draws the normal-curve approximation centered on today's price.
-- **Delegated change handler** (line 2340): listens for `.options-expiry` change, fetches `/api/options/[symbol]?expiry=VALUE`, rebuilds the overlay via `probabilityBlockHtml`, and redraws the canvas. Also rebuilds `#options-details` via `optionsDetailsHtml`.
-- **`optionsDetailsHtml(o, symbol)`** (line 857): renders the "Details for the curious" grid (expected move, max pain, support/resistance, PC ratio, IV, unusual volume) and the "In plain English" synthesis.
-- **`applyLens(c, d, s)`** (line 1426): swaps Investor ⇄ Trader lens. In Trader lens, the bell curve + date selector are visible; in Investor lens, `#trader-overlay` is `hidden`.
+- **`renderSignals(c, d, s)`** (line 1150): builds the detail page — chart zone first, then verdict strip, then story sections (business, quality, value, growth, price, ownership, watchouts, news, noise/market pulse). Bell curve overlay removed from primary chart zone.
+- **`probabilityBlockHtml(o, symbol)`** (line 818): retained for code reuse but no longer rendered in primary detail page. Bell curve canvas is demoted; probability visualisation removed from chart area per Jobs minimalism.
+- **Delegated change handler** (line 2340): listens for `.options-expiry` change, fetches `/api/options/[symbol]?expiry=VALUE`, rebuilds `#options-details` via `optionsDetailsHtml`. Overlay update removed.
+- **`optionsDetailsHtml(o, symbol)`** (line 857): renders the options grid (expected move, max pain, support/resistance, PC ratio, IV, unusual volume) and the "In plain English" synthesis. Rendered inside Market pulse section with expiry selector.
+- **`marketNoiseContent(s, symbol)`** (line 759): now includes an expiry `<select class="options-expiry">` with date · ~Nd labels, caption explaining change effect, and `optionsDetailsHtml`. Visible Trader lens only.
+- **`applyLens(c, d, s)`** (line 1426): swaps Investor ⇄ Trader lens. Trader lens shows Market pulse with options expiry control; Investor lens hides Market pulse. `#trader-overlay` removed from DOM.
 - **`currentLens()`** (line 246): reads `localStorage.getItem('if_lens') === 'trader' ? 'trader' : 'investor'`.
 
 ### 3. Key Constants
@@ -61,7 +62,6 @@ This document maps the codebase structure, data flow, and key gotchas so future 
 |---|---|---|
 | **Yahoo `0.00001` IV sentinel** | `lib/yahoo.js:computeOptionSignals` | Yahoo options data returns `0.00001` as a placeholder for illiquid/stale contracts. The old code `filter(c => c.iv > 0)` included these, dragging the average ATM IV to ~1% instead of the real ~25–35%. This caused: (a) expected-move numbers like `±$0.66 (0.2%)` (meaningless), (b) bell curve always a narrow spike that doesn't perceptibly change across expiries, (c) sigma=0.12 on a $80 stock (Uber) — impossible IV. The fix: exclude `iv < 0.01` and widen band gracefully; fallback to closest strike with `iv > 0` when all data is corrupted. |
 | **`getOptionChainLimited` returns full expirations but only 2 chains** | `lib/yahoo.js:getOptionChainLimited` | The expiration list (all dates) is returned, but only the nearest and ~30-DTE contracts are fetched. This means the dropdown always has all dates, but the initial signals only use 2 expiries for computing metrics. |
-| **Trader overlay hidden in Investor lens** | `public/app.js:1178,1427,1440` | `#trader-overlay` (bell curve + date selector) is `hidden` when `currentLens() === 'investor'`. The lens toggle (`currentLens`/`applyLens`) controls visibility. |
 | **Bell curve is a symmetric normal approximation centered on today's price** | `public/app.js:drawProbabilityDistribution` | The "most likely price" is always today's price (no-move outcome is the market's best guess). The curve width scales with `σ = expectedMoveDollar = atmIV × price × sqrt(DTE/365)`. Changing the option date changes DTE and thereby σ — but only if ATM IV is computed correctly (see above). |
 | **Mistral model usage** | `lib/mistral.js` (new) / `api/signals/[symbol].js` | The main narrative uses `mistral-medium-latest` (7-investor takes). A new `mistral-small-latest` helper provides a brief trader-focused read (expected move, max pain, support/resistance, sentiment) for the per-expiry options block, with a hardcoded fallback when no API key or on timeout. |
 | **CBOE fallback for options** | `api/options/[symbol].js` / `lib/cboe.js` | If Yahoo options fetch fails entirely, a delayed CBOE chain is used as fallback. CBOE data is stale (end-of-day) and has fewer expiries. |

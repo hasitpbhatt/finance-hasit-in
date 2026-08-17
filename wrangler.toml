@@ -1,7 +1,0 @@
-name = "investment-finder"
-compatibility_date = "2024-09-23"
-pages_build_output_dir = "public"
-
-# Cloudflare Pages project. Static assets live in ./public and the API is
-# implemented as Pages Functions in ./functions (run on the Cloudflare edge).
-# No build step is required — the site is plain static HTML/CSS/JS.

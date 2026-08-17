@@ -289,6 +289,10 @@ main { max-width: 1080px; margin: 0 auto; padding: var(--space-4); }
 .qn-dot.mid { background: var(--warn); }
 .qn-dot.down { background: var(--down); }
 .qn-dot.neutral { background: var(--muted); }
+.qn-chip.lens-active { border-color: color-mix(in srgb, var(--accent) 55%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent); }
+.verdict-strip[data-lens="trader"] { border-color: color-mix(in srgb, #ffaa4c 45%, var(--border)); }
+.verdict-strip[data-lens="trader"] .score-dial-fill.up,
+.verdict-strip[data-lens="trader"] .score-dial-value.up { color: #ffaa4c; }
 
 /* ---------- sticky section nav ---------- */
 .detail-nav {
@@ -318,6 +322,29 @@ main { max-width: 1080px; margin: 0 auto; padding: var(--space-4); }
 .detail-hero-right { text-align: right; flex-shrink: 0; }
 .detail-hero .price { font-size: 32px; font-weight: 700; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; line-height: 1; }
 .detail-hero .change { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 6px; }
+
+/* ---------- detail two-column layout + sticky rail ---------- */
+.detail-layout { display: grid; grid-template-columns: 1fr; gap: var(--space-4); align-items: start; }
+.detail-rail { min-width: 0; order: -1; }
+@media (min-width: 1024px) {
+  .detail-layout { grid-template-columns: minmax(0, 1fr) 300px; }
+  .detail-rail { order: 0; position: sticky; top: 76px; }
+}
+.rail-card { background: var(--glass); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-3); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); box-shadow: var(--shadow-sm); display: flex; flex-direction: column; gap: var(--space-2); }
+.rail-price { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; display: flex; align-items: baseline; gap: 8px; }
+.rail-grade { text-align: left; padding: var(--space-2) 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.rail-grade-val { font-size: 30px; font-weight: 700; line-height: 1; letter-spacing: -0.02em; }
+.rail-grade-val.up { color: var(--up); }
+.rail-grade-val.down { color: var(--down); }
+.rail-grade-val.mid { color: var(--warn); }
+.rail-grade-label { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.rail-copy .copy-btn { width: 100%; justify-content: center; }
+.rail-note { opacity: .8; }
+.pro-toggle { cursor: pointer; font: inherit; font-size: 12px; padding: 8px 14px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--muted); transition: all .18s var(--ease); min-height: 32px; }
+.pro-toggle:hover { color: var(--text); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.pro-toggle.active { background: var(--grad); border-color: transparent; color: #fff; font-weight: 600; }
+.options-expiry-line { margin: var(--space-2) 0; }
+.options-expiry-line strong { color: var(--text); }
 
 .narrative-breath { font-size: 14px; line-height: 1.6; color: var(--text); margin: var(--space-2) 0; }
 .narrative-breath .more { color: var(--accent); cursor: pointer; font-size: 12px; margin-left: var(--space-1); }
@@ -473,13 +500,21 @@ tbody tr:hover { background: var(--surface-2); }
 .lens-tag.investor { background: rgba(76,141,255,0.14); color: var(--accent); border: 1px solid rgba(76,141,255,0.3); }
 .lens-tag.trader { background: rgba(255,170,76,0.14); color: #ffaa4c; border: 1px solid rgba(255,170,76,0.3); }
 
+/* ---------- single lens switch (Investor / Trader) ---------- */
+.lens-switch { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-3); }
+.lens-pill { cursor: pointer; font: inherit; font-size: 12px; padding: 6px 16px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--muted); transition: all .18s var(--ease); min-height: 30px; }
+.lens-pill:hover { color: var(--text); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.lens-pill.active { background: var(--grad); border-color: transparent; color: #fff; font-weight: 600; }
+.lens-hint { margin-left: auto; }
+
+/* ---------- trader overlay (bell curve on the chart, Trader lens only) ---------- */
+.trader-overlay { margin: var(--space-2) 0 0; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface-2); }
+.trader-overlay[hidden] { display: none; }
+.trader-overlay .prob-graph { margin-top: var(--space-2); }
+.trader-overlay .lens-tag.trader { margin-bottom: var(--space-1); }
+
 .contrarian-note { font-size: 12px; line-height: 1.5; color: var(--warn); background: rgba(255,196,76,0.1); border: 1px solid rgba(255,196,76,0.3); border-radius: var(--radius-md); padding: 10px 14px; margin: var(--space-2) 0; }
 
-/* horizon toggle */
-.horizon-toggle { display: flex; gap: var(--space-2); margin: var(--space-3) 0 var(--space-1); }
-.horizon-pill { cursor: pointer; font: inherit; font-size: 12px; padding: 6px 14px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--muted); transition: all .18s var(--ease); }
-.horizon-pill:hover { color: var(--text); }
-.horizon-pill.active { background: var(--grad); border-color: transparent; color: #fff; font-weight: 600; }
 .disclaimer { margin-top: var(--space-1); opacity: .85; }
 
 /* margin-of-safety band */

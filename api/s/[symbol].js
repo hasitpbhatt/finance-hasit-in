@@ -56,7 +56,6 @@ export async function GET(request) {
       <p>Data: Yahoo Finance, SEC EDGAR, CoinGecko, StockTwits (free, no key). For educational use only — not investment advice.</p>
     </footer>
 
-    <script>window.__INITIAL_SYMBOL__ = "${raw}";</script>
     <script src="/app.js"></script>
   </body>
 </html>`;

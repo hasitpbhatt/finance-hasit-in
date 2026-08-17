@@ -1,6 +1,11 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "outputDirectory": "public",
+  "functions": {
+    "api/signals/[symbol].js": { "maxDuration": 30 },
+    "api/detail/[symbol].js": { "maxDuration": 30 },
+    "api/options/[symbol].js": { "maxDuration": 30 }
+  },
   "rewrites": [
     { "source": "/s/:symbol", "destination": "/api/s/:symbol" }
   ],

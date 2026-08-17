@@ -2,7 +2,7 @@
 
 ## Production = `prod` branch
 
-This repo deploys to Cloudflare Pages via the **`prod`** branch. Pushing to `prod` = shipping live code to users.
+This repo deploys to Vercel via the **`prod`** branch. Pushing to `prod` = shipping live code to users.
 
 ### NEVER do any of the following (without explicit human override):
 
@@ -10,7 +10,7 @@ This repo deploys to Cloudflare Pages via the **`prod`** branch. Pushing to `pro
 - **Force-push anywhere:** never run `git push -f` / `--force` / `--force-with-lease` to any branch; always ask first and let the human decide.
 - **Delete the `prod` branch:** never run `git branch -d/-D` on `prod` locally or remotely.
 - **Modify branch protection:** never run `gh api` calls that create, update, or delete protection rules, environments, or deployments.
-- **Run a production deploy via CLI:** never run `wrangler pages deploy` targeting the production environment (e.g. `--branch prod`, `--production`, or while on the `prod` branch).
+- **Run a production deploy via CLI:** never run `wrangler pages deploy` or `vercel --prod` targeting the production environment (e.g. `--branch prod`, `--production`, or while on the `prod` branch).
 
 ### Ship to prod — approved workflow
 
@@ -36,30 +36,30 @@ This repo deploys to Cloudflare Pages via the **`prod`** branch. Pushing to `pro
 | `git push origin prod` | Deploys to production immediately           |
 | `git push --force`     | Rewrites history; can force-break production |
 | `gh api */protection`  | Weakens branch protection server-side       |
-| `wrangler pages deploy`| Bypasses git, deploys straight to production|
+| `vercel --prod` / `wrangler pages deploy` | Bypasses git, deploys straight to production|
 | Editing guardrails     | Removes the safety net                      |
 
 ---
 
-## Project — Investment Finder (Cloudflare Pages + Vercel)
+## Project — Investment Finder (Vercel)
 
 ### Architecture
 
 - Static frontend in `public/` (`index.html`, `styles.css`, `app.js`) — **no build step**, no package.json, no framework.
-- Serverless Pages Functions in `functions/` (`/api/*`), shared libs in `functions/_lib/`.
-- Key routes: `functions/api/signals/[symbol].js` (deep-dive scores + narrative), `functions/api/detail/[symbol].js` (financials), `functions/api/options/[symbol].js`, `functions/api/crypto.js`, `functions/api/screener.js`, `functions/api/search.js`, `functions/api/overview.js`, `functions/api/market/sentiment.js`, `functions/s/[symbol].js` (detail page).
+- Serverless API in `api/` (`/api/*`), shared libs in `lib/`.
+- Key routes: `api/signals/[symbol].js` (deep-dive scores + narrative), `api/detail/[symbol].js` (financials), `api/options/[symbol].js`, `api/crypto.js`, `api/screener.js`, `api/search.js`, `api/overview.js`, `api/market/sentiment.js`, `api/s/[symbol].js` (detail page).
 
 ### Local dev
 
 ```bash
-wrangler dev   # serves at http://localhost:8788 (hot-reloads)
+vercel dev   # serves at http://localhost:3000 (hot-reloads)
 ```
 
 ### Data providers
 
 - **CoinGecko** is the only source CORS-open to direct browser calls; everything else (**Yahoo, EDGAR/XBRL, Mistral, CBOE, Stocktwits**) must go through the server proxy.
-- Server proxy uses edge caching (`functions/_lib/cache.js`) + a `retryFetch` helper that honors `Retry-After` capped at 5000ms. Expect 429s when rate-limited (e.g. CoinGecko under load) — clients should show graceful degradation, not crash.
-- No API keys in client code; secrets live in server-side env vars (via Cloudflare dashboard).
+- Server proxy uses edge caching (`lib/cache.js`) + a `retryFetch` helper that honors `Retry-After` capped at 5000ms. Expect 429s when rate-limited (e.g. CoinGecko under load) — clients should show graceful degradation, not crash.
+- No API keys in client code; secrets live in server-side env vars (via Vercel dashboard).
 
 ### UX principles (user requirements — do not regress)
 
@@ -74,7 +74,7 @@ wrangler dev   # serves at http://localhost:8788 (hot-reloads)
 
 ```bash
 node --check public/app.js
-# then smoke-test in a real browser at http://localhost:8788 (Cloudflare) or http://localhost:3000 (Vercel)
+# then smoke-test in a real browser at http://localhost:3000 (Vercel)
 # (Playwright probe scripts live outside the repo under %TEMP%\opencode)
 ```
 

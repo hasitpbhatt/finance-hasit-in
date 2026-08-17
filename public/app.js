@@ -75,7 +75,7 @@ function scoreDialHtml(score) {
   const pct = Math.round(((v + 100) / 200) * 100);
   const dialCls = v >= 30 ? 'up' : v >= -30 ? 'mid' : 'down';
   const gradeCls = v >= 10 ? 'up' : v > -10 ? 'mid' : 'down';
-  const gradeLabel = (score.label || 'neutral').replace(/_/g, ' ');
+  const gradeLabel = (score.label || score.grade || 'neutral').replace(/_/g, ' ');
   const ARC = Math.PI * 46;
   const dash = (ARC * pct) / 100;
   return `
@@ -92,16 +92,19 @@ function scoreDialHtml(score) {
 
 // Quality-vs-Noise framing: long-term score vs short-term market pulse.
 function qualityVsNoiseHtml(s) {
+  const lens = currentLens();
   const chips = [];
   if (s.score) {
     const sv = s.score.value;
     const cls = sv >= 10 ? 'up' : sv > -10 ? 'mid' : 'down';
-    chips.push(`<span class="qn-chip" title="Quality = long-term business health"><span class="qn-dot ${cls}"></span>Quality <strong>${sv > 0 ? '+' : ''}${sv}</strong></span>`);
+    const active = lens === 'investor' ? ' lens-active' : '';
+    chips.push(`<span class="qn-chip${active}" title="Quality = long-term business health"><span class="qn-dot ${cls}"></span>Quality <strong>${sv > 0 ? '+' : ''}${sv}</strong></span>`);
   }
   if (s.marketPulse) {
     const mv = s.marketPulse.value;
     const cls = mv > 10 ? 'up' : mv < -10 ? 'down' : 'neutral';
-    chips.push(`<span class="qn-chip qn-muted" title="Market pulse = short-term crowd &amp; options noise — not part of the long-term verdict"><span class="qn-dot ${cls}"></span>Market pulse <strong>${mv > 0 ? '+' : ''}${mv}</strong></span>`);
+    const active = lens === 'trader' ? ' lens-active' : '';
+    chips.push(`<span class="qn-chip qn-muted${active}" title="Market pulse = short-term crowd &amp; options noise — not part of the long-term verdict"><span class="qn-dot ${cls}"></span>Market pulse <strong>${mv > 0 ? '+' : ''}${mv}</strong></span>`);
   }
   if (!chips.length) return '';
   return `<div class="quality-vs-noise">${chips.join('')}</div>`;
@@ -171,31 +174,24 @@ function verdictStripHtml(d, s) {
         return `<span class="score-factor"${tip ? ` title="${tip}"` : ''}><span class="dot ${cls}"></span>${f.label} ${label}</span>`;
       }).join('')}</div>`
     : '';
-  const plain = plainVerdictSentence(d, s);
   const cov = s.score?.coverage;
   const conf = cov != null && cov < 1
     ? `<div class="caption confidence-note">Based on ${s.score.factors?.length || 0} of 4 data sources (${Math.round(cov * 100)}% coverage) — treat the score as provisional when coverage is low.</div>`
     : '';
   return `
-    <div class="verdict-strip">
+    <div class="verdict-strip" data-lens="${currentLens()}">
       ${flag}
-      <div class="lens-tag investor">Investor lens · long-term</div>
       <div class="verdict-top">
-        <div>${scoreDialHtml(s.score)}</div>
+        <div id="verdict-dial">${scoreDialHtml(primaryScore(s))}</div>
         <div class="verdict-narrative">
-          ${plain ? `<p class="verdict-plain">${plain}</p>` : ''}
-          ${qualityVsNoiseHtml(s)}
+          ${plainForLens(d, s) ? `<p class="verdict-plain" id="verdict-plain">${plainForLens(d, s)}</p>` : ''}
+          <div id="quality-vs-noise">${qualityVsNoiseHtml(s)}</div>
           ${narrativeBreathHtml(s)}
         </div>
-        <div class="verdict-copy">${copyVerdictHtml(d, s)}</div>
       </div>
       ${factors}
       ${marginOfSafetyHtml(s)}
       ${conf}
-      <div class="horizon-toggle" role="group" aria-label="Time horizon">
-        <button class="horizon-pill active" data-horizon="invest" type="button">Invest (years)</button>
-        <button class="horizon-pill" data-horizon="trade" type="button">Trade (days–weeks)</button>
-      </div>
       <div class="caption disclaimer">Research context, not a trade trigger. The verdict blends fundamentals only; options &amp; retail flow are shown separately as risk.</div>
     </div>`;
 }
@@ -243,6 +239,76 @@ function copyVerdictHtml(d, s) {
   const scoreVal = s.score?.value ?? 0;
   const text = `${d.symbol} ${price} (${chg}) · Verdict: ${grade} (${scoreVal > 0 ? '+' : ''}${scoreVal})`;
   return `<button class="copy-btn" data-copy="${encodeURIComponent(text)}" title="Copy verdict">${ICONS.copy} Copy verdict</button>`;
+}
+
+// ---------- lens switch (single Investor/Trader control) ----------
+function currentLens() {
+  try { return localStorage.getItem('if_lens') === 'trader' ? 'trader' : 'investor'; } catch { return 'investor'; }
+}
+function lensSwitchHtml() {
+  const lens = currentLens();
+  const inv = lens === 'investor' ? 'active' : '';
+  const tr = lens === 'trader' ? 'active' : '';
+  return `
+    <div class="lens-switch" role="tablist" aria-label="View lens">
+      <button class="lens-pill ${inv}" data-lens="investor" role="tab" aria-selected="${lens === 'investor'}">Investor</button>
+      <button class="lens-pill ${tr}" data-lens="trader" role="tab" aria-selected="${lens === 'trader'}">Trader</button>
+      <span class="lens-hint caption">${lens === 'trader' ? 'Short-term market bets &amp; options' : 'Long-term business quality'}</span>
+    </div>`;
+}
+
+// Truncate a narrative to a plain-English preview with a consistent "read more".
+function truncate180(t) {
+  if (!t) return '';
+  const cutAt = t.lastIndexOf('. ', 180);
+  return cutAt > 50 ? t.substring(0, cutAt + 1) : t.substring(0, 180) + '…';
+}
+
+// The lens swaps which "primary" score drives the verdict strip.
+function primaryScore(s) {
+  return (currentLens() === 'trader' && s.marketPulse) ? s.marketPulse : s.score;
+}
+function traderPlainSentence(s) {
+  const m = s.marketPulse;
+  if (!m) return '';
+  const v = m.value;
+  if (v >= 10) return 'Short-term crowd is leaning bullish — options flow and momentum favor buyers right now.';
+  if (v <= -10) return 'Short-term crowd is leaning bearish — options flow and momentum favor sellers right now.';
+  return 'Short-term signals are balanced — no clear crowd bias either way.';
+}
+function plainForLens(d, s) {
+  return currentLens() === 'trader' ? traderPlainSentence(s) : plainVerdictSentence(d, s);
+}
+
+// Pro mode — a persisted preference that auto-expands every "Why / the numbers"
+// block so experienced users don't click each one open.
+function proMode() {
+  try { return localStorage.getItem('if_pro') === '1'; } catch { return false; }
+}
+function applyProMode(c) {
+  const on = proMode();
+  c.querySelectorAll('.raw-details').forEach(el => { el.open = on; });
+}
+
+// ---------- persistent side rail (sticky on desktop) ----------
+function railGradeHtml(s) {
+  const sc = primaryScore(s);
+  if (!sc || !sc.factors?.length) return '<span class="muted">Not enough data</span>';
+  const v = sc.value;
+  const cls = v >= 10 ? 'up' : v > -10 ? 'mid' : 'down';
+  const label = (sc.label || sc.grade || 'neutral').replace(/_/g, ' ');
+  return `<div class="rail-grade-val ${cls}">${v > 0 ? '+' : ''}${v}</div><div class="rail-grade-label">${label}</div>`;
+}
+function railHtml(d, s) {
+  return `
+    <div class="rail-card">
+      <div class="rail-price">${fmtMoney(d.price)} <span class="change ${chgClass(d.changePercent)}">${fmtPct(d.changePercent)}</span></div>
+      <div class="rail-grade" id="rail-grade">${railGradeHtml(s)}</div>
+      ${lensSwitchHtml()}
+      <button class="pro-toggle${proMode() ? ' active' : ''}" id="pro-toggle" type="button" aria-pressed="${proMode()}">Pro · show numbers</button>
+      <div class="rail-copy">${copyVerdictHtml(d, s)}</div>
+      <div class="caption rail-note">Verdict stays in view as you scroll.</div>
+    </div>`;
 }
 
 // ---------- hero ----------
@@ -452,6 +518,7 @@ function chartHtml(d) {
       <div class="chart-range">
         ${ranges.map(r => `<button class="chart-range-btn${r === '1Y' ? ' active' : ''}" data-range="${r}">${r}</button>`).join('')}
       </div>
+      <div class="trader-overlay" id="trader-overlay" hidden></div>
     </div>`;
 }
 
@@ -476,7 +543,7 @@ function insightHtml({ sentence, chips, details }) {
     ? `<div class="insight-chips">${chips.map(c => `<span class="chip ${c.cls || ''}">${c.text}</span>`).join('')}</div>`
     : '';
   const detailsHtml = details
-    ? `<details class="raw-details"><summary>Why / the numbers</summary><div class="signal-grid mt-2">${details}</div></details>`
+    ? `<details class="raw-details"${proMode() ? ' open' : ''}><summary>Why / the numbers</summary><div class="signal-grid mt-2">${details}</div></details>`
     : '';
   return `<div class="insight">${sentence ? `<p class="insight-text">${sentence}</p>` : ''}${chipHtml}${detailsHtml}</div>`;
 }
@@ -675,8 +742,12 @@ function marketNoiseContent(s, symbol) {
     html += `<div class="contrarian-note">The crowd is leaning hard <strong>${lean}</strong>. Crowds this one-sided have historically been a <em>fade</em> — treat as risk, not confirmation.</div>`;
   }
 
-  // options — details only (the bell-curve panel lives at the top of the page)
+  // options — details only (the bell-curve overlay lives on the chart in the Trader lens)
   if (s.options?.available && s.options.signals?.available) {
+    const oSig = s.options.signals;
+    if (oSig.expiryDate) {
+      html += `<div class="options-expiry-line caption">Options expiring <strong>${oSig.expiryDate}</strong>${oSig.dte != null ? ` · ${oSig.dte} days to expiry` : ''}</div>`;
+    }
     html += optionsDetailsHtml(s.options, symbol);
   }
 
@@ -720,8 +791,9 @@ function probabilityBlockHtml(o, symbol) {
   if (!(bands && price != null)) return '';
 
   const sigma = +(bands.p68.hi - price).toFixed(2);
-  let html = '<div class="options-block prob-panel" id="prob-panel">';
+  let html = '<div class="options-block trader-overlay-inner">';
   html += `<div class="lens-tag trader">Trader lens · probability</div>`;
+  html += `<div class="options-expiry-line caption">Options expiring <strong>${moveDate || '—'}</strong>${dte != null ? ` · ${dte} days to expiry` : ''}</div>`;
   html += `<div class="prob-graph"><canvas class="prob-dist-canvas" data-price="${price}" data-sigma="${sigma}" role="img" aria-label="Probability of price at ${moveDate || 'expiry'}"></canvas></div>`;
   html += `<div class="prob-caption">The single most likely price at ${moveDate || 'expiry'} is <strong>${fmtMoney(price)}</strong> — the same as today, because a no-move outcome is the market's best guess. The curve shows the market's expected range: <strong>50%</strong> chance it lands between ${fmtMoney(bands.p50.lo)} and ${fmtMoney(bands.p50.hi)}, <strong>90%</strong> chance between ${fmtMoney(bands.p90.lo)} and ${fmtMoney(bands.p90.hi)}. This is a <em>symmetric</em> guess — real prices have fatter tails (bigger surprises than the curve implies).</div>`;
 
@@ -777,7 +849,7 @@ function optionsDetailsHtml(o, symbol) {
     sig.unusual.slice(0, 3).forEach(u => rawRows.push(`<div><span>${u.type} @ ${fmtMoney(u.strike)}</span><span>vol ${fmtNum(u.vol)} · OI ${fmtNum(u.oi)}</span></div>`));
   }
   if (rawRows.length) {
-    html += `<details class="raw-details"><summary>Details for the curious</summary><div class="signal-grid mt-2">${rawRows.join('')}</div></details>`;
+    html += `<details class="raw-details"${proMode() ? ' open' : ''}><summary>Details for the curious</summary><div class="signal-grid mt-2">${rawRows.join('')}</div></details>`;
   }
 
   html += '</div>';
@@ -968,15 +1040,16 @@ function newsContent(d) {
 
 // ---------- main renderers ----------
 function renderDetailFast(c, d, symbol) {
-  c.innerHTML = heroHtml(d, '') + chartHtml(d);
+  c.innerHTML = `<div class="detail-layout"><div class="detail-main">${heroHtml(d, '')}${chartHtml(d)}</div><aside class="detail-rail" id="detail-rail"></aside></div>`;
   drawChart(d.chart, '1Y', d.indicators);
 
   // init section accordion (story)
+  const main = c.querySelector('.detail-main');
   const story = document.createElement('div');
   story.className = 'story-sections';
   story.id = 'story-sections';
-  story.innerHTML = '<div class="story-section open" data-section="verdict"><button class="story-toggle" aria-expanded="true"><span>Verdict</span><span class="chevron">' + ICONS.chevron + '</span></button><div class="story-body"><p class="muted">Loading signals…</p></div></div>';
-  c.appendChild(story);
+  story.innerHTML = '<div class="loading-skeleton muted" style="padding:16px 0;font-size:13px;">Loading analysis…</div>';
+  main.appendChild(story);
 
   // attach chart range handlers
   c.querySelectorAll('.chart-range-btn').forEach(btn => {
@@ -1009,13 +1082,23 @@ function renderSignals(c, d, s) {
     heroEl.insertAdjacentHTML('afterend', verdictStripHtml(d, s));
   }
 
-  // probability panel — OPEN and FIRST, right after the verdict strip (before chart)
-  const vstrip = c.querySelector('.verdict-strip');
-  if (vstrip) {
-    const prob = probabilityBlockHtml(s.options, d.symbol, d);
-    if (prob) vstrip.insertAdjacentHTML('afterend', prob);
-    const pc = c.querySelector('#prob-panel .prob-dist-canvas');
-    if (pc) requestAnimationFrame(() => drawProbabilityDistribution(pc));
+  // persistent side rail (sticky on desktop): glance summary + controls
+  const rail = c.querySelector('#detail-rail');
+  if (rail) rail.innerHTML = railHtml(d, s);
+
+  // Trader overlay — lives in the chart zone (Zone B), hidden in Investor lens.
+  const overlay = c.querySelector('#trader-overlay');
+  if (overlay) {
+    const probHtml = probabilityBlockHtml(s.options, d.symbol, d);
+    overlay.innerHTML = probHtml;
+    const hasProb = !!overlay.querySelector('.prob-dist-canvas');
+    if (currentLens() === 'trader' && hasProb) {
+      overlay.hidden = false;
+      const pc = overlay.querySelector('.prob-dist-canvas');
+      if (pc) requestAnimationFrame(() => drawProbabilityDistribution(pc));
+    } else {
+      overlay.hidden = true;
+    }
   }
 
   // render sections
@@ -1048,7 +1131,8 @@ function renderSignals(c, d, s) {
     });
   });
 
-  // persona switcher — swap narrative text without a network call
+  // persona switcher — swap narrative text without a network call; keep a
+  // consistent "read more" affordance on every persona (plain-English-first).
   c.querySelectorAll('.persona-pill').forEach(pill => {
     pill.addEventListener('click', () => {
       const row = pill.closest('.persona-row');
@@ -1056,52 +1140,69 @@ function renderSignals(c, d, s) {
       if (row) row.querySelectorAll('.persona-pill').forEach(p => p.classList.remove('active'));
       pill.classList.add('active');
       if (breathEl) {
+        const full = decodeURIComponent(pill.dataset.full);
         const textEl = breathEl.querySelector('.breath-text');
-        textEl.textContent = decodeURIComponent(pill.dataset.full);
-        const more = breathEl.querySelector('.more');
-        if (more) more.remove();
+        if (textEl) textEl.textContent = truncate180(full);
+        let more = breathEl.querySelector('.more');
+        if (!more) {
+          more = document.createElement('span');
+          more.className = 'more';
+          breathEl.appendChild(more);
+        }
+        more.dataset.full = pill.dataset.full;
+        more.textContent = 'read more';
       }
     });
   });
 
-  // read more
-  c.querySelectorAll('.more').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const full = decodeURIComponent(btn.dataset.full);
-      const breathEl = btn.closest('.narrative-breath');
-      if (breathEl) {
-        breathEl.querySelector('.breath-text').textContent = full;
-        btn.remove();
-      }
+  // delegated "read more" — survives persona switches (re-added spans)
+  c.querySelectorAll('.narrative-breath').forEach(breath => {
+    breath.addEventListener('click', (e) => {
+      const more = e.target.closest('.more');
+      if (!more) return;
+      const textEl = breath.querySelector('.breath-text');
+      if (textEl) textEl.textContent = decodeURIComponent(more.dataset.full);
+      more.remove();
     });
   });
 
-  // sticky section nav
+  // sticky section nav (covers Verdict · Chart · all accordion sections)
   initDetailNav(c);
 
-  // horizon toggle — reshapes which lens is emphasised (never blended)
-  c.querySelectorAll('.horizon-pill').forEach(pill => {
+  // single lens switcher — Investor (default) vs Trader reshapes the whole view
+  c.querySelectorAll('.lens-pill').forEach(pill => {
     pill.addEventListener('click', () => {
-      c.querySelectorAll('.horizon-pill').forEach(p => p.classList.remove('active'));
+      c.querySelectorAll('.lens-pill').forEach(p => { p.classList.remove('active'); p.setAttribute('aria-selected', 'false'); });
       pill.classList.add('active');
-      const horizon = pill.dataset.horizon;
-      const storyEl = c.querySelector('#story-sections');
-      if (!storyEl) return;
-      // open the lens-appropriate first section; collapse the rest
-      const targetId = horizon === 'trade' ? 'noise' : 'business';
-      storyEl.querySelectorAll('.story-section').forEach(sec => {
-        const open = sec.dataset.section === targetId;
-        sec.classList.toggle('open', open);
-        const btn = sec.querySelector('.story-toggle');
-        if (btn) btn.setAttribute('aria-expanded', open);
-      });
+      pill.setAttribute('aria-selected', 'true');
+      const lens = pill.dataset.lens;
+      try { localStorage.setItem('if_lens', lens); } catch { /* ignore */ }
+      const hint = c.querySelector('.lens-hint');
+      if (hint) hint.innerHTML = lens === 'trader' ? 'Short-term market bets &amp; options' : 'Long-term business quality';
+      applyLens(c, d, s);
     });
   });
+
+  // Pro toggle — persist and live-apply to all "Why / the numbers" blocks
+  const proBtn = c.querySelector('#pro-toggle');
+  if (proBtn) {
+    proBtn.addEventListener('click', () => {
+      const on = !proMode();
+      try { localStorage.setItem('if_pro', on ? '1' : '0'); } catch { /* ignore */ }
+      proBtn.classList.toggle('active', on);
+      proBtn.setAttribute('aria-pressed', String(on));
+      applyProMode(c);
+    });
+  }
+
+  // sync the page to the persisted lens on first paint
+  applyLens(c, d, s);
+  applyProMode(c);
 }
 
-// Sticky jump-pill nav that follows the accordion; scroll-spies via IntersectionObserver.
+// Sticky jump-pill nav for the whole detail page; scroll-spies via IntersectionObserver.
 function initDetailNav(c) {
-  const story = $('#story-sections');
+  const story = c.querySelector('#story-sections');
   if (!story) return;
   const sections = [...story.querySelectorAll('.story-section')];
   if (!sections.length) return;
@@ -1110,7 +1211,25 @@ function initDetailNav(c) {
   const nav = document.createElement('div');
   nav.className = 'detail-nav';
 
-  const items = sections.map(sec => {
+  const items = [];
+  const spyTargets = [];
+
+  function addTop(cls, label) {
+    const target = c.querySelector(cls);
+    if (!target) return;
+    const pill = document.createElement('button');
+    pill.className = 'detail-nav-pill';
+    pill.dataset.target = cls;
+    pill.textContent = label;
+    pill.addEventListener('click', () => target.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    nav.appendChild(pill);
+    items.push({ pill, sec: target });
+    spyTargets.push(target);
+  }
+  addTop('.verdict-strip', 'Verdict');
+  addTop('.chart-wrap', 'Chart');
+
+  sections.forEach(sec => {
     const titleEl = sec.querySelector('.story-toggle span');
     const title = titleEl ? titleEl.textContent.trim() : (sec.dataset.section || '');
     const pill = document.createElement('button');
@@ -1129,10 +1248,13 @@ function initDetailNav(c) {
       }
     });
     nav.appendChild(pill);
-    return { pill, sec };
+    items.push({ pill, sec });
+    spyTargets.push(sec);
   });
 
-  story.before(nav);
+  const heroEl = c.querySelector('.detail-hero');
+  if (heroEl) heroEl.after(nav);
+  else c.prepend(nav);
 
   if ('IntersectionObserver' in window) {
     const spy = new IntersectionObserver((entries) => {
@@ -1140,7 +1262,50 @@ function initDetailNav(c) {
         if (en.isIntersecting) items.forEach(({ pill, sec }) => pill.classList.toggle('active', sec === en.target));
       });
     }, { rootMargin: '-35% 0px -55% 0px' });
-    items.forEach(({ sec }) => spy.observe(sec));
+    spyTargets.forEach(t => spy.observe(t));
+  }
+}
+
+// Apply the active lens to the visible page: swap the primary dial + headline,
+// highlight the matching Quality/Market-pulse chip, surface the chart overlay,
+// and open the lens-appropriate accordion section. Makes the toggle unmistakable.
+function applyLens(c, d, s) {
+  const lens = currentLens();
+  const strip = c.querySelector('.verdict-strip');
+  if (strip) strip.dataset.lens = lens;
+
+  const dial = c.querySelector('#verdict-dial');
+  if (dial) dial.innerHTML = scoreDialHtml(primaryScore(s));
+
+  const plainEl = c.querySelector('#verdict-plain');
+  if (plainEl) plainEl.textContent = plainForLens(d, s) || '';
+
+  const qvn = c.querySelector('#quality-vs-noise');
+  if (qvn) qvn.innerHTML = qualityVsNoiseHtml(s);
+
+  const rg = c.querySelector('#rail-grade');
+  if (rg) rg.innerHTML = railGradeHtml(s);
+
+  const overlay = c.querySelector('#trader-overlay');
+  if (overlay) {
+    if (lens === 'trader' && overlay.querySelector('.prob-dist-canvas')) {
+      overlay.hidden = false;
+      const pc = overlay.querySelector('.prob-dist-canvas');
+      if (pc) requestAnimationFrame(() => drawProbabilityDistribution(pc));
+    } else {
+      overlay.hidden = true;
+    }
+  }
+
+  const story = c.querySelector('#story-sections');
+  if (story) {
+    const targetId = lens === 'trader' ? 'noise' : 'business';
+    story.querySelectorAll('.story-section').forEach(sec => {
+      const open = sec.dataset.section === targetId;
+      sec.classList.toggle('open', open);
+      const btn = sec.querySelector('.story-toggle');
+      if (btn) btn.setAttribute('aria-expanded', String(open));
+    });
   }
 }
 
@@ -1668,23 +1833,24 @@ document.addEventListener('change', async (e) => {
   if (!sel) return;
   const symbol = decodeURIComponent(sel.dataset.symbol);
   const value = sel.value;
-  const probPanel = document.getElementById('prob-panel');
+  const overlay = document.getElementById('trader-overlay');
   const details = document.getElementById('options-details');
   sel.disabled = true;
-  if (probPanel) probPanel.style.opacity = '0.4';
+  if (overlay) overlay.style.opacity = '0.4';
   if (details) details.style.opacity = '0.4';
   try {
     const q = value ? '?expiry=' + encodeURIComponent(value) : '';
     const data = await getJSON('/api/options/' + encodeURIComponent(symbol) + q);
     if (!data.available || !data.signals) throw new Error('no options data');
     const optsObj = { currentPrice: data.currentPrice, expirations: data.expirations, signals: data.signals, available: true };
-    if (probPanel) probPanel.innerHTML = probabilityBlockHtml(optsObj, symbol);
-    if (details) details.innerHTML = optionsDetailsHtml(optsObj, symbol);
-    if (probPanel) probPanel.style.opacity = '1';
-    if (details) details.style.opacity = '1';
-    requestAnimationFrame(() => drawProbabilityDistribution(probPanel ? probPanel.querySelector('.prob-dist-canvas') : null));
+    if (overlay) {
+      overlay.innerHTML = probabilityBlockHtml(optsObj, symbol);
+      overlay.style.opacity = '1';
+      if (!overlay.hidden) requestAnimationFrame(() => drawProbabilityDistribution(overlay.querySelector('.prob-dist-canvas')));
+    }
+    if (details) { details.innerHTML = optionsDetailsHtml(optsObj, symbol); details.style.opacity = '1'; }
   } catch (err) {
-    if (probPanel) { probPanel.style.opacity = '1'; probPanel.innerHTML = '<p class="muted caption" style="padding:var(--space-2) 0;">Could not load options for this date.</p>'; }
+    if (overlay) { overlay.style.opacity = '1'; overlay.innerHTML = '<p class="muted caption" style="padding:var(--space-2) 0;">Could not load options for this date.</p>'; }
     if (details) details.style.opacity = '1';
   }
 });

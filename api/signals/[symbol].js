@@ -6,13 +6,17 @@
 import { getInsiderTrades, getLeadershipChanges } from '../../lib/edgar.js';
 import { getNewsIntel } from '../../lib/newsintel.js';
 import { getHiring } from '../../lib/hiring.js';
-import { getOptionChain, getOptionChainLimited, computeOptionSignals, getQuotes, getFundamentals } from '../../lib/yahoo.js';
+import { getOptionChain, getOptionChainLimited, computeOptionSignals, getQuotes, getFundamentals, getChart } from '../../lib/yahoo.js';
 import { getCboeOptionChain } from '../../lib/cboe.js';
 import { getXbrlTrend } from '../../lib/xbrl.js';
 import { getRetailSentiment } from '../../lib/stocktwits.js';
 import { getEarnings, getRecommendations, getCompanyNews } from '../../lib/finnhub.js';
 import { json, corsPreflight } from '../../lib/http.js';
 import { retryFetch } from '../../lib/cache.js';
+import { summarizePriceAction } from '../../lib/priceAction.js';
+import { summarizeGex } from '../../lib/gex.js';
+import { getTvScreener } from '../../lib/tradingviewScraper.js';
+import { getTrendSpiderHint } from '../../lib/trendspiderScraper.js';
 
 // Run a promise under a wall-clock cap AND abort it when the cap hits so the
 // underlying fetch/parse stops consuming CPU (the Worker Free plan budgets only
@@ -435,7 +439,7 @@ async function handleSignals(request, params) {
     xbrl: 4500,
   };
 
-  const [insiderR, newsIntelR, leadershipR, hiringR, optionsR, analystR, retailR, xbrlR, fhEarningsR, fhRecsR, fhNewsR] = await Promise.allSettled([
+  const [insiderR, newsIntelR, leadershipR, hiringR, optionsR, analystR, retailR, xbrlR, fhEarningsR, fhRecsR, fhNewsR, chartR, tvR, tsR] = await Promise.allSettled([
     withTimeout(getInsiderTrades(symbol, 5, src()), TIMEOUTS.insider, controllers[controllers.length - 1]),
     withTimeout(getNewsIntel(symbol, companyName, src()), TIMEOUTS.newsIntel, controllers[controllers.length - 1]),
     withTimeout(getLeadershipChanges(symbol, 12, process.env, src()), TIMEOUTS.leadership, controllers[controllers.length - 1]),
@@ -474,6 +478,12 @@ async function handleSignals(request, params) {
     withTimeout(getRecommendations(symbol, process.env, src()), 3000, controllers[controllers.length - 1]),
     // Finnhub: company news
     withTimeout(getCompanyNews(symbol, process.env, src()), 4000, controllers[controllers.length - 1]),
+    // Chart for price action breakout/retest
+    withTimeout(getChart(symbol, '6mo', '1d', src()).catch(()=>null), 3000, controllers[controllers.length - 1]),
+    // Optional TradingView scraper
+    withTimeout(getTvScreener(symbol).catch(()=>({available:false})), 2000, controllers[controllers.length - 1]),
+    // Optional TrendSpider hint
+    withTimeout(getTrendSpiderHint(symbol).catch(()=>({available:false})), 3000, controllers[controllers.length - 1]),
   ]);
 
   // --- Insider ---
@@ -695,6 +705,26 @@ async function handleSignals(request, params) {
   result.marketPulse = computeMarketPulse(result);
   result.marginOfSafety = computeMarginOfSafety(value, result.price);
   result.buffettMetrics = computeBuffettMetrics(result, value);
+
+  // --- Technical price action breakout/retest ---
+  if (chartR.status === 'fulfilled' && chartR.value) {
+    try {
+      const chart = chartR.value;
+      const quotes = chart?.chart?.result?.[0]?.indicators?.quote?.[0];
+      const timestamps = chart?.chart?.result?.[0]?.timestamp || [];
+      const closes = (quotes?.close || []).map((c,i)=>({t: timestamps[i], c, v: quotes.volume?.[i]||0}));
+      const tech = summarizePriceAction(closes);
+      result.technical = tech;
+    } catch {
+      result.technical = { available:false };
+    }
+  } else {
+    result.technical = { available:false };
+  }
+
+  // --- Optional TradingView / TrendSpider enrichment ---
+  result.tradingview = tvR.status === 'fulfilled' && tvR.value ? tvR.value : { available:false };
+  result.trendspider = tsR.status === 'fulfilled' && tsR.value ? tsR.value : { available:false };
 
   // --- Mistral narrative (runs after all signals, uses aggregated data) ---
   try {

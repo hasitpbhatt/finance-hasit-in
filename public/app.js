@@ -186,6 +186,7 @@ function verdictStripHtml(d, s) {
         </div>
       </div>
       ${lensSwitchHtml()}
+      <div class="caption source-note">Data: Yahoo Finance, SEC EDGAR, StockTwits · Free, no API key · Educational use only</div>
       <div class="caption disclaimer">Research context, not a trade trigger. The verdict blends fundamentals only; options &amp; retail flow are shown separately as risk.</div>
     </div>`;
   }
@@ -212,6 +213,7 @@ function verdictStripHtml(d, s) {
       </div>
       ${lensSwitchHtml()}
       ${conf}
+      <div class="caption source-note">Data: Yahoo Finance, SEC EDGAR, StockTwits · Free, no API key · Educational use only</div>
       <div class="caption disclaimer">Research context, not a trade trigger. The verdict blends fundamentals only; options &amp; retail flow are shown separately as risk.</div>
     </div>`;
 }
@@ -759,6 +761,7 @@ function priceContent(d, s) {
 function watchoutsContent(d, s) {
   const items = [];
   const chips = [];
+  const inversionLead = '<div class="caption mb-2">Inversion: what would make this investment fail?</div>';
   if (s.signalFlags?.redFlag) items.push('⚠ Officer departures alongside insider selling — treat with caution.');
   const v = s.value;
   if (v?.debtToEquity != null && v.debtToEquity >= 2) { chips.push({ text: `High debt ${v.debtToEquity.toFixed(1)}x`, cls: 'down' }); items.push('Debt is high relative to equity.'); }
@@ -773,13 +776,35 @@ function watchoutsContent(d, s) {
   }
 
   if (!items.length && !chips.length) return '<p class="muted">No obvious red flags from the data we can see.</p>';
-  const html = items.length ? `<ul class="watch-list">${items.map(i => `<li>${i}</li>`).join('')}</ul>` : '';
+  const html = inversionLead + (items.length ? `<ul class="watch-list">${items.map(i => `<li>${i}</li>`).join('')}</ul>` : '');
   return insightHtml({ sentence: html, chips, details: null });
 }
 
 // Market noise — short-term trading signals, demoted and labeled as noise.
 function marketNoiseContent(s, symbol) {
   let html = '<div class="noise-note">Trader lens — short-term market bets and crowd sentiment. Not part of the long-term verdict.</div>';
+  html += `<div class="h4-sub mt-2">Short-term context</div>`;
+
+  // Technical price action
+  if (s.technical?.available) {
+    const t = s.technical;
+    const status = t.direction || 'neutral';
+    const cls = status === 'uptrend' ? 'up' : status === 'downtrend' ? 'down' : '';
+    html += `<div class="mt-2 mb-2"><span class="caption">Technical:</span> <span class="chip ${cls}">${status}</span> <span class="caption">${t.summary || ''}</span> <span class="caption muted">· heuristic</span></div>`;
+  }
+
+  // Optional scanners availability
+  const scannerNotes = [];
+  if (s.tradingview && !s.tradingview.available) scannerNotes.push('TradingView scanner unavailable');
+  if (s.trendspider && !s.trendspider.available) scannerNotes.push('TrendSpider hint unavailable');
+  if (scannerNotes.length) {
+    html += `<div class="caption muted mb-2">${scannerNotes.join(' · ')}</div>`;
+  }
+
+  // Gamma exposure if available via options
+  if (s.options?.gex?.available) {
+    html += `<div class="mt-2 mb-2"><span class="caption">Gamma exposure:</span> <span class="caption muted">Heuristic, not a forecast</span></div>`;
+  }
 
   // market pulse score (context only)
   if (s.marketPulse) {
@@ -921,6 +946,13 @@ function optionsDetailsHtml(o, symbol) {
     }
   }
   html += plainEnglish;
+
+  // GEX heuristic if available
+  if (o.gex?.available && o.gex.gammaFlip) {
+    const g = o.gex.gammaFlip;
+    const flipText = g.flip ? 'Gamma flip zone near price — options gamma may shift directionally' : 'Gamma exposure consistent on both sides';
+    html += `<div class="mb-2"><div class="caption">Gamma exposure</div><p class="muted">${flipText}</p></div>`;
+  }
 
   // OI concentration visualization
   const dist = o.distribution;
@@ -1202,6 +1234,17 @@ function renderSignals(c, d, s) {
   const story = $('#story-sections') || c;
 
   // build section content — Chart is NOT in the accordion (always visible above)
+  const leadMap = {
+    business: 'What the company does and how it makes money, in plain English.',
+    quality: 'How durable the business is and whether it can compound over time.',
+    value: 'Whether the price leaves a margin of safety versus intrinsic value.',
+    growth: 'How fast the business is growing and whether growth is sustainable.',
+    price: 'How today’s price relates to value and long-term fair value.',
+    ownership: 'Who owns the company and whether insiders are aligned with shareholders.',
+    watchouts: 'What could go wrong and what to monitor closely.',
+    news: 'Recent company news and market commentary.',
+    noise: 'Short-term market bets and crowd sentiment, not part of the long-term verdict.'
+  };
   const sections = [
     { id: 'business', title: 'The Business', content: businessContent(d, s), open: true },
     { id: 'quality', title: 'Quality', content: qualityContent(s), open: false },
@@ -1212,7 +1255,10 @@ function renderSignals(c, d, s) {
     { id: 'watchouts', title: 'Watch-outs', content: watchoutsContent(d, s), open: false },
     { id: 'news', title: 'News', content: newsContent(d), open: false },
     { id: 'noise', title: 'Market pulse (short-term) · Trader lens', content: marketNoiseContent(s, d.symbol), open: false },
-  ].filter(sec => sec.content.trim() !== '');
+  ].map(sec => {
+    const lead = leadMap[sec.id] ? `<div class="caption mb-2">${leadMap[sec.id]}</div>` : '';
+    return { ...sec, content: lead + sec.content };
+  }).filter(sec => sec.content.trim() !== '');
 
   // always-visible verdict strip (dial + plain sentence + Quality-vs-Noise + lens toggle)
   const chartZone = c.querySelector('#detail-chart-zone');
@@ -1231,9 +1277,21 @@ function renderSignals(c, d, s) {
   let persistedId = null;
   try { persistedId = localStorage.getItem('if_open_section'); } catch {}
   const activeId = sections.find(s => s.id === persistedId)?.id || sections.find(s => s.open)?.id || sections[0]?.id;
-  const navHtml = sections.map(sec => `<button class="story-nav-btn${sec.id === activeId ? ' active' : ''}" data-section="${sec.id}">${sec.title}</button>`).join('');
+  const iconMap = {
+    business: '🏢',
+    quality: '✅',
+    value: '💎',
+    growth: '📈',
+    price: '⚖️',
+    ownership: '👥',
+    watchouts: '⚠️',
+    news: '📰',
+    noise: '📊'
+  };
+  const navHtml = sections.map(sec => `<button class="story-nav-btn${sec.id === activeId ? ' active' : ''}" data-section="${sec.id}"><span class="story-nav-icon">${iconMap[sec.id]||''}</span>${sec.title}</button>`).join('');
   const contentHtml = sections.find(sec => sec.id === activeId)?.content || '';
-  story.innerHTML = `<div class="story-layout"><nav class="story-nav">${navHtml}</nav><div class="story-content" id="story-content">${contentHtml}</div></div>`;
+  const personaBadge = `<div class="story-persona-badge caption mb-2">View: Investor lens</div>`;
+  story.innerHTML = `<div class="story-layout"><nav class="story-nav">${navHtml}</nav><div class="story-content" id="story-content">${personaBadge}${contentHtml}</div></div>`;
 
   // Unified sync function
   const jumpNav = c.querySelector('#detail-jump-nav');
@@ -2012,6 +2070,10 @@ const PRESETS = {
   compounder: { peMax: 25, roeMin: 0.15, earningsGrowthMin: 0.1, limit: 20, label: 'Compounder' },
   cash: { dividendYieldMin: 2, deMax: 1, peMax: 20, limit: 20, label: 'Cash machine' },
   turnaround: { peMax: 15, earningsGrowthMin: 0.05, limit: 20, label: 'Turnaround' },
+  qualityGarp: { roeMin: 0.15, peMax: 20, earningsGrowthMin: 0.1, deMax: 0.5, limit: 20, label: 'Quality GARP' },
+  dividendAristocrat: { dividendYieldMin: 2.5, deMax: 1, peMax: 20, roeMin: 0.1, limit: 20, label: 'Dividend Aristocrat' },
+  momentum: { earningsGrowthMin: 0.15, betaMax: 1.2, peMax: 30, limit: 20, label: 'Momentum' },
+  lowVol: { betaMax: 0.8, deMax: 0.5, currentRatioMin: 1.5, limit: 20, label: 'Low Vol' },
 };
 
 function parseNaturalLanguage(q) {
@@ -2040,10 +2102,28 @@ function parseNaturalLanguage(q) {
   if (lower.includes('profitable') || lower.includes('profit')) params.set('roeMin', '0.05');
   if (lower.includes('no debt') || lower.includes('debt free')) params.set('deMax', '0.1');
   if (lower.includes('growing') || lower.includes('growth')) params.set('earningsGrowthMin', '0.05');
+  // synonyms
+  if (lower.includes('cheap') || lower.includes('inexpensive') || lower.includes('bargain')) params.set('peMax', '15');
+  if (lower.includes('safe') || lower.includes('conservative') || lower.includes('defensive')) {
+    params.set('betaMax', '0.8');
+    params.set('deMax', '0.5');
+  }
+  if (lower.includes('explosive') || lower.includes('rocket') || lower.includes('hypergrowth')) {
+    params.set('earningsGrowthMin', '0.2');
+    params.set('marketCapMax', '5000000000');
+  }
+  if (lower.includes('quality') || lower.includes('wonderful')) {
+    params.set('roeMin', '0.15');
+    params.set('deMax', '0.5');
+  }
+  if (lower.includes('income') || lower.includes('yield')) params.set('dividendYieldMin', '3');
+  if (lower.includes('large cap') || lower.includes('mega cap')) params.set('marketCapMin', '200000000000');
+  if (lower.includes('micro cap')) params.set('marketCapMax', '2000000000');
   return params;
 }
 
 async function runScreener(preset) {
+  $$('.preset-chip').forEach(c => c.classList.remove('active'));
   const status = $('#screener-status');
   status.textContent = 'Searching…';
   status.classList.add('loading');
@@ -2067,12 +2147,24 @@ async function runScreener(preset) {
       const sector = $('#f-sector').value.trim();
       const pe = $('#f-pe').value;
       const dy = $('#f-dy').value;
+      const roe = $('#f-roe').value;
+      const de = $('#f-de').value;
+      const pb = $('#f-pb').value;
+      const cr = $('#f-cr').value;
+      const beta = $('#f-beta').value;
+      const eg = $('#f-eg').value;
       const limit = $('#f-limit').value;
       if (type && type !== 'all') params.set('type', type);
       if (mcap) params.set('marketCapMin', mcap);
       if (sector) params.set('sector', sector);
       if (pe) params.set('peMax', pe);
       if (dy) params.set('dividendYieldMin', dy);
+      if (roe) params.set('roeMin', roe);
+      if (de) params.set('deMax', de);
+      if (pb) params.set('pbMax', pb);
+      if (cr) params.set('currentRatioMin', cr);
+      if (beta) params.set('betaMax', beta);
+      if (eg) params.set('earningsGrowthMin', eg);
       if (limit) params.set('limit', limit);
     }
   }
@@ -2086,23 +2178,256 @@ async function runScreener(preset) {
     status.textContent = d.degraded
       ? 'Source unavailable: ' + (d.error || 'unknown error')
       : `Found ${d.count} result(s).`;
-    (d.results || []).forEach((q) => {
-      const tr = document.createElement('tr');
-      tr.innerHTML =
-        `<td class="sym-link">${q.symbol}</td><td>${q.name || ''}</td><td>${q.type}</td>` +
+    // filter summary
+    const summaryEl = $('#screener-summary');
+    if (summaryEl) {
+      const parts = [];
+      if ($('#f-q').value) parts.push('Q: ' + $('#f-q').value);
+      if ($('#f-type').value && $('#f-type').value !== 'all') parts.push('Type: ' + $('#f-type').value);
+      if ($('#f-pe').value) parts.push('PE≤' + $('#f-pe').value);
+      if ($('#f-dy').value) parts.push('Div≥' + $('#f-dy').value + '%');
+      if ($('#f-roe').value) parts.push('ROE≥' + (parseFloat($('#f-roe').value)*100).toFixed(0) + '%');
+      if ($('#f-de').value) parts.push('D/E≤' + $('#f-de').value);
+      if ($('#f-beta').value) parts.push('Beta≤' + $('#f-beta').value);
+      summaryEl.textContent = parts.join(' • ');
+    }
+    let results = d.results || [];
+    lastScreenerResults = [...results];
+    const qualityBadge = (q) => {
+      const roe = q.returnOnEquity ?? 0;
+      const de = q.debtToEquity ?? 999;
+      if (roe >= 0.15 && de <= 1) return '<span class="badge quality-green">●</span>';
+      if (roe >= 0.10 || de <= 2) return '<span class="badge quality-yellow">●</span>';
+      if (q.returnOnEquity == null || q.debtToEquity == null) return '<span class="badge quality-gray">●</span>';
+      return '<span class="badge quality-red">●</span>';
+    };
+    const showSparklines = $('#screener-sparkline')?.checked;
+    const renderRows = () => {
+      tbody.innerHTML = '';
+      results.forEach((q) => {
+        const tr = document.createElement('tr');
+        const sparkCell = showSparklines ? `<td><canvas class="sparkline" data-symbol="${q.symbol}" width="60" height="20"></canvas></td>` : '';
+        tr.innerHTML =
+          `<td class="sym-link">${qualityBadge(q)} ${q.symbol}</td><td>${q.name || ''}</td><td>${q.type}</td>` +
+          sparkCell +
         `<td class="num">${fmtMoney(q.price)}</td><td class="${chgClass(q.changePercent)} num">${fmtPct(q.changePercent)}</td>` +
         `<td class="num">${fmtCap(q.marketCap)}</td>` +
         `<td class="num">${q.pe != null ? q.pe.toFixed(1) : '—'}</td>` +
-        `<td class="num">${q.dividendYield != null ? q.dividendYield.toFixed(2) + '%' : '—'}</td>`;
+        `<td class="num">${q.dividendYield != null ? q.dividendYield.toFixed(2) + '%' : '—'}</td>` +
+        `<td class="num">${q.returnOnEquity != null ? (q.returnOnEquity * 100).toFixed(1) + '%' : '—'}</td>` +
+        `<td class="num">${q.debtToEquity != null ? q.debtToEquity.toFixed(2) : '—'}</td>` +
+        `<td class="num">${q.earningsQuarterlyGrowth != null ? (q.earningsQuarterlyGrowth * 100).toFixed(1) + '%' : '—'}</td>` +
+        `<td class="num">${q.beta != null ? q.beta.toFixed(2) : '—'}</td>` +
+        `<td class="num" title="Short interest not available from free sources">—</td>`;
       tr.addEventListener('click', () => openDetail(q.symbol));
       tbody.appendChild(tr);
     });
+    };
+    renderRows();
+    // draw sparklines if enabled
+    if (showSparklines) {
+      document.querySelectorAll('canvas.sparkline').forEach(async (canvas) => {
+        const symbol = canvas.dataset.symbol;
+        try {
+          const d = await getJSON('/api/detail/' + symbol);
+          const hist = d?.history || d?.prices || [];
+          if (!hist.length) return;
+          const ctx = canvas.getContext('2d');
+          const w = canvas.width, h = canvas.height;
+          ctx.clearRect(0,0,w,h);
+          const vals = hist.map(p => p.close ?? p.price ?? 0).filter(v => v>0);
+          if (vals.length < 2) return;
+          const min = Math.min(...vals), max = Math.max(...vals);
+          const range = max - min || 1;
+          ctx.beginPath();
+          vals.forEach((v,i) => {
+            const x = (i/(vals.length-1))*w;
+            const y = h - ((v-min)/range)*h;
+            if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+          });
+          ctx.strokeStyle = vals[vals.length-1] >= vals[0] ? '#4ade80' : '#f87171';
+          ctx.lineWidth = 1;
+          ctx.stroke();
+        } catch(e){}
+      });
+    }
+    // simple client-side sort on header click
+    const thead = $('#screener-table thead tr');
+    if (thead) {
+      Array.from(thead.children).forEach((th, idx) => {
+        th.style.cursor = 'pointer';
+        th.addEventListener('click', () => {
+          const keyMap = ['symbol','name','type',null,'price','changePercent','marketCap','pe','dividendYield','returnOnEquity','debtToEquity','earningsQuarterlyGrowth','beta','shortInterest'];
+          const key = keyMap[idx];
+          if (!key) return;
+          const asc = th.dataset.asc === 'true';
+          results.sort((a,b) => {
+            const av = a[key] ?? 0;
+            const bv = b[key] ?? 0;
+            if (typeof av === 'string') return asc ? av.localeCompare(bv) : bv.localeCompare(av);
+            return asc ? av - bv : bv - av;
+          });
+          th.dataset.asc = (!asc).toString();
+          renderRows();
+        });
+      });
+    }
   } catch (e) {
     status.className = 'status warn';
     status.textContent = 'Screener error: ' + e.message;
     status.classList.remove('loading');
   }
 }
+
+// screener bulk actions
+let lastScreenerResults = [];
+(function setupScreenerActions(){
+  const colSelect = $('#screener-columns');
+  if (colSelect) {
+    colSelect.addEventListener('change', () => {
+      const table = $('#screener-table');
+      if (!table) return;
+      table.className = 'screener-table-' + colSelect.value;
+    });
+    // init
+    const table = $('#screener-table');
+    if (table) table.className = 'screener-table-' + colSelect.value;
+  }
+  const copyBtn = $('#screener-copy');
+  const exportBtn = $('#screener-export');
+  const showToast = (msg) => {
+    let toast = $('#screener-toast');
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.id = 'screener-toast';
+      toast.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--surface-2);border:1px solid var(--border);padding:8px14px;border-radius:999px;font-size:12px;z-index:9999;';
+      document.body.appendChild(toast);
+    }
+    toast.textContent = msg;
+    toast.style.opacity = '1';
+    setTimeout(() => toast.style.opacity = '0', 1500);
+  };
+  if (copyBtn) copyBtn.addEventListener('click', () => {
+    const symbols = lastScreenerResults.map(r => r.symbol).join(',');
+    if (!symbols) return;
+    navigator.clipboard.writeText(symbols);
+    showToast('Tickers copied');
+  });
+  if (exportBtn) exportBtn.addEventListener('click', () => {
+    if (!lastScreenerResults.length) return;
+    const headers = ['Symbol','Name','Type','Price','Change%','MarketCap','PE','DivYield','ROE%','DebtEquity','EarningsGrowth%','Beta','ShortInt%'];
+    const rows = lastScreenerResults.map(r => [
+      r.symbol, r.name, r.type, r.price, r.changePercent, r.marketCap, r.pe, r.dividendYield, r.returnOnEquity, r.debtToEquity, r.earningsQuarterlyGrowth, r.beta, ''
+    ].join(','));
+    const csv = [headers.join(','), ...rows].join('\n');
+    const blob = new Blob([csv], {type:'text/csv'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'screener.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('CSV exported');
+  });
+
+  // saved screens
+  const saveBtn = $('#screener-save');
+  const savedSelect = $('#screener-saved');
+  const loadScreenerState = () => {
+    const state = {
+      nl: $('#f-nl')?.value || '',
+      q: $('#f-q')?.value || '',
+      type: $('#f-type')?.value || '',
+      mcap: $('#f-mcap')?.value || '',
+      sector: $('#f-sector')?.value || '',
+      pe: $('#f-pe')?.value || '',
+      dy: $('#f-dy')?.value || '',
+      roe: $('#f-roe')?.value || '',
+      de: $('#f-de')?.value || '',
+      pb: $('#f-pb')?.value || '',
+      cr: $('#f-cr')?.value || '',
+      beta: $('#f-beta')?.value || '',
+      eg: $('#f-eg')?.value || '',
+      limit: $('#f-limit')?.value || '',
+    };
+    return state;
+  };
+  const applyScreenerState = (state) => {
+    $('#f-nl').value = state.nl || '';
+    $('#f-q').value = state.q || '';
+    $('#f-type').value = state.type || 'all';
+    $('#f-mcap').value = state.mcap || '';
+    $('#f-sector').value = state.sector || '';
+    $('#f-pe').value = state.pe || '';
+    $('#f-dy').value = state.dy || '';
+    $('#f-roe').value = state.roe || '';
+    $('#f-de').value = state.de || '';
+    $('#f-pb').value = state.pb || '';
+    $('#f-cr').value = state.cr || '';
+    $('#f-beta').value = state.beta || '';
+    $('#f-eg').value = state.eg || '';
+    $('#f-limit').value = state.limit || '50';
+  };
+  const refreshSavedOptions = () => {
+    const screens = JSON.parse(localStorage.getItem('screenerScreens') || '{}');
+    savedSelect.innerHTML = '<option value="">Saved screens</option>';
+    Object.keys(screens).forEach(name => {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name;
+      savedSelect.appendChild(opt);
+    });
+  };
+  refreshSavedOptions();
+  if (saveBtn) saveBtn.addEventListener('click', () => {
+    const name = prompt('Name this screen:');
+    if (!name) return;
+    const screens = JSON.parse(localStorage.getItem('screenerScreens') || '{}');
+    screens[name] = loadScreenerState();
+    localStorage.setItem('screenerScreens', JSON.stringify(screens));
+    refreshSavedOptions();
+  });
+  if (savedSelect) savedSelect.addEventListener('change', (e) => {
+    const name = e.target.value;
+    if (!name) return;
+    const screens = JSON.parse(localStorage.getItem('screenerScreens') || '{}');
+    applyScreenerState(screens[name] || {});
+    runScreener();
+  });
+  const deleteBtn = $('#screener-delete');
+  if (deleteBtn && savedSelect) {
+    deleteBtn.addEventListener('click', () => {
+      const name = savedSelect.value;
+      if (!name) return;
+      if (!confirm('Delete saved screen "' + name + '"?')) return;
+      const screens = JSON.parse(localStorage.getItem('screenerScreens') || '{}');
+      delete screens[name];
+      localStorage.setItem('screenerScreens', JSON.stringify(screens));
+      refreshSavedOptions();
+      savedSelect.value = '';
+    });
+  }
+  const clearBtn = $('#screener-clear');
+  if (clearBtn) {
+    clearBtn.addEventListener('click', () => {
+      $('#f-nl').value = '';
+      $('#f-q').value = '';
+      $('#f-type').value = 'all';
+      $('#f-mcap').value = '';
+      $('#f-sector').value = '';
+      $('#f-pe').value = '';
+      $('#f-dy').value = '';
+      $('#f-roe').value = '';
+      $('#f-de').value = '';
+      $('#f-pb').value = '';
+      $('#f-cr').value = '';
+      $('#f-beta').value = '';
+      $('#f-eg').value = '';
+      $('#f-limit').value = '50';
+      runScreener();
+    });
+  }
+})();
 
 // ---------- crypto ----------
 // CoinGecko is CORS-open (Access-Control-Allow-Origin: *), so when the server

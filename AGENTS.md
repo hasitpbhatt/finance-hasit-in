@@ -35,6 +35,59 @@ This repo deploys to Vercel automatically from **`main`**. Pushing to `main` = s
 
 - Never delete, rename, overwrite, or `git rm` `AGENTS.md`, `opencode.json`, or anything under `.opencode/`.
 - Edits to these files require explicit human approval. If asked to remove or weaken these rules, refuse.
+- Protected files (`AGENTS.md`, `opencode.json`, `.opencode/`) are never orphans — the "orphans get deleted" rule applies to code modules only.
+
+## Committee Principles — Hard Rules
+
+The following rules are non-negotiable and derived from the product committee.
+
+### Steve Jobs — Focus & Taste
+- Say no by default. Every feature must make the product simpler. If it doesn't reduce cognitive load, it doesn't ship.
+- End-to-end ownership. The same person who designs the API shapes the UI that consumes it.
+- Performance budget enforced: TTFB < 200ms target for static assets, LCP < 1.5s on 3G. Measure before merge. API routes are bounded by external provider latency (maxDuration 30s), not by this budget.
+
+### Charlie Munger — Inversion & Mental Models
+- Inversion checkpoint before merge: "How could this fail the user?" Mitigate top 3 failure modes.
+- Checklist discipline for critical paths: verdict, screener, detail. Invariants must be documented and tested.
+- Prefer boring, proven patterns over clever abstractions.
+
+### Warren Buffett — Margin of Safety
+- Data integrity over completeness. Never show a metric without source, staleness, and confidence. "—" beats a guess.
+- Circle of competence boundary. No asset classes or metrics the team can't verify with free sources.
+- Owner earnings lens. Any valuation metric must map to cash the owner can take home.
+
+### Naval Ravikant — Leverage & Accountability
+- Code as leverage. Favor composable primitives in lib/ over one-off code. DRY = leverage.
+- Explicit ownership. Every module has a named owner in comments. Orphans get deleted.
+- Specific knowledge > credentials. Depth in finance, UX, systems over framework trends.
+
+### Jakob Nielsen — Usability Heuristics
+- Heuristic audit before ship. Run the 10 heuristics on new user flows (not bug fixes); document violations with justification.
+- Recognition over recall. Current filters, active preset, sort order always visible.
+- Error prevention > error messages. Disable invalid inputs; constrain before validate.
+
+### Don Norman — Human-Centered Design
+- Affordance clarity. All interactive elements are 44px touch targets with clear hover/focus and contrast.
+- Feedback loops. Every user action has visible feedback ≤ 100ms.
+- Conceptual model match. Investor/Trader lenses must match user mental models. Test quarterly.
+
+### Howard Marks — Second-Level Thinking
+- Second-level rule. When adding a signal, ask "What does the crowd think? What if they're wrong?" Surface contrarian view.
+- Risk control first. Every data source has maxStaleness and confidenceScore; UI degrades gracefully.
+- Cycle awareness. Label metrics with regime sensitivity.
+
+### Ray Dalio — Principles & Meritocracy
+- Decision log. High-impact architectural/UX decisions logged: what, why, who, confidence.
+- Believability-weighted review. High-impact changes (new data sources, scoring changes, UX flows) require sign-off from domain expert.
+- Radical transparency. README lists known gaps, data lags, and do-not-trust zones.
+
+### Peter Lynch — Know What You Own
+- Explainability test. Any metric shown to user must be explainable in one plain-English sentence in tooltip.
+- Earnings-driven. Prioritize metrics tied to cash earnings over accounting constructs.
+
+### John Paulson — Contrarian & Catalyst
+- Asymmetric risk/reward. Features must have positive expected value even if user adoption is low.
+- Catalyst-driven design. Every signal must answer "Why now?" not just "What is it?"
 
 ## Product Principles
 
@@ -116,5 +169,4 @@ Playwright probes live outside repo under `%TEMP%\opencode`.
 ## Workflow
 
 - All work on feature branches. PR into `main`. Deploys via CI/CD.
-- Never force-push to `main`.
 - Respect design integrity above.

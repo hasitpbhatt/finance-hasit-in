@@ -1,6 +1,7 @@
 import { getOptionChainLimited, getOptionChainForExpiry, computeOptionSignals, getQuotes } from '../../lib/yahoo.js';
 import { getCboeOptionChain } from '../../lib/cboe.js';
 import { json, corsPreflight } from '../../lib/http.js';
+import { summarizeGex } from '../../lib/gex.js';
 
 export async function OPTIONS() {
   return corsPreflight();
@@ -61,6 +62,14 @@ if (!symbol) return json({ error: 'symbol required' }, { status: 400 });
 
   const signals = computeOptionSignals(chain, currentPrice, { expiryEpoch: requestedEpoch });
 
+  // GEX heuristic
+  let gex = null;
+  try {
+    gex = summarizeGex(chain, currentPrice);
+  } catch {
+    gex = { available:false };
+  }
+
   const expirations = (chain.expirations || []).map(epoch => ({
     date: new Date(epoch * 1000).toISOString().split('T')[0],
     epoch,
@@ -115,5 +124,6 @@ if (!symbol) return json({ error: 'symbol required' }, { status: 400 });
     nearestExpiry,
     signals,
     distribution,
+    gex,
   }, { headers: { 'Cache-Control': 's-maxage=600' } });
 }

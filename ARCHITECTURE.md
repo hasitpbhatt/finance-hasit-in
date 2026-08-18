@@ -12,6 +12,23 @@ This document maps the codebase structure, data flow, and key gotchas so future 
 | `AGENTS.md` | Agent guardrails (protected; never delete/weaken). |
 | `opencode.json` | Opencode configuration (protected). |
 
+## Design & Decision Principles
+
+These principles govern architectural choices and are derived from the committee.
+
+| Principle | Source | Architectural Impact |
+|---|---|---|
+| **Say no by default** | Jobs | No feature creep; every API must earn its place |
+| **Inversion checkpoint** | Munger | Every route documents top 3 failure modes and mitigations |
+| **Data integrity > completeness** | Buffett | All endpoints return `source`, `staleness`, `confidenceScore`; `null` beats fabricated data |
+| **Margin of safety** | Buffett/Marks | Cache TTLs, retry budgets, and graceful degradation are mandatory for all external calls |
+| **Leverage via composability** | Naval | New data providers must be added to `lib/` as primitives, not one-offs in `api/` |
+| **End-to-end ownership** | Jobs | API author must own the UI surface consuming it |
+| **Explainability** | Lynch/Norman | Every metric exposed in UI has a one-sentence plain-English definition in code comments |
+| **Cycle awareness** | Marks | Time-series endpoints expose regime metadata; UI labels metrics accordingly |
+| **Decision log** | Dalio | High-impact architectural changes require a one-line log entry in `ARCHITECTURE.md` or `DECISIONS.md` |
+| **Free-only boundary** | Buffett | No paid APIs; all providers must be free-tier or CORS-open |
+
 ## Data Flow — Signal Pipeline
 
 ### 1. `/api/signals/[symbol]` (heavy, aggregated)

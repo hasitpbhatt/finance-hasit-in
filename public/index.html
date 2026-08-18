@@ -75,6 +75,10 @@
             <button class="preset-chip" data-preset="compounder" title="Profitable, growing, low debt — quality businesses that reinvest">Compounder</button>
             <button class="preset-chip" data-preset="cash" title="Cheap, low debt, with a dividend — businesses that hand you cash">Cash machine</button>
             <button class="preset-chip" data-preset="turnaround" title="Cheap and growing again — beaten-down businesses recovering">Turnaround</button>
+            <button class="preset-chip" data-preset="qualityGarp" title="High ROE, reasonable PE, growing earnings, low debt">Quality GARP</button>
+            <button class="preset-chip" data-preset="dividendAristocrat" title="High dividend yield, low debt, reasonable PE, solid ROE">Dividend Aristocrat</button>
+            <button class="preset-chip" data-preset="momentum" title="High earnings growth with controlled volatility">Momentum</button>
+            <button class="preset-chip" data-preset="lowVol" title="Low beta, low debt, strong current ratio">Low Vol</button>
           </div>
           <button class="filters-toggle" id="filters-toggle">Show all filters</button>
           <form id="screener-form" class="filters" style="display:none;">
@@ -89,29 +93,69 @@
               </select>
             </label>
             <label>Min Market Cap
-              <input id="f-mcap" type="number" placeholder="e.g. 50000000000" />
+              <input id="f-mcap" type="number" placeholder="e.g. 50000000000" title="Enter minimum market cap in USD, e.g. 50000000000 for $50B" />
             </label>
             <label>Sector
               <input id="f-sector" type="text" placeholder="e.g. Technology" />
             </label>
             <label>Max P/E
-              <input id="f-pe" type="number" placeholder="e.g. 25" />
+              <input id="f-pe" type="number" placeholder="e.g. 25" title="Maximum price-to-earnings ratio" />
             </label>
             <label>Min Div Yield
-              <input id="f-dy" type="number" step="0.1" placeholder="e.g. 2" />
+              <input id="f-dy" type="number" step="0.1" placeholder="e.g. 2" title="Minimum dividend yield in percent, e.g. 2 for 2%" />
+            </label>
+            <label>Min ROE %
+              <input id="f-roe" type="number" step="0.01" placeholder="e.g. 0.15" title="Minimum return on equity, e.g. 0.15 for 15%" />
+            </label>
+            <label>Max Debt/Equity
+              <input id="f-de" type="number" step="0.1" placeholder="e.g. 1" title="Maximum debt to equity ratio" />
+            </label>
+            <label>Max P/B
+              <input id="f-pb" type="number" step="0.1" placeholder="e.g. 3" title="Maximum price to book ratio" />
+            </label>
+            <label>Min Current Ratio
+              <input id="f-cr" type="number" step="0.1" placeholder="e.g. 1.5" title="Minimum current ratio" />
+            </label>
+            <label>Max Beta
+              <input id="f-beta" type="number" step="0.1" placeholder="e.g. 1.2" title="Maximum beta for volatility control" />
+            </label>
+            <label>Min Earnings Growth %
+              <input id="f-eg" type="number" step="0.01" placeholder="e.g. 0.1" title="Minimum quarterly earnings growth, e.g. 0.1 for 10%" />
             </label>
             <label>Limit
-              <input id="f-limit" type="number" value="50" />
+              <input id="f-limit" type="number" value="50" title="Maximum number of results to return" />
             </label>
             <button type="submit">Search</button>
           </form>
           <div id="screener-status" class="status"></div>
+          <div id="screener-summary" class="screener-summary"></div>
+          <div class="screener-actions">
+            <button type="button" id="screener-copy">Copy tickers</button>
+            <button type="button" id="screener-export">Export CSV</button>
+            <button type="button" id="screener-clear">Clear filters</button>
+            <select id="screener-columns" title="Toggle columns">
+              <option value="core">Core columns</option>
+              <option value="investor" selected>Investor + Core</option>
+              <option value="all">All columns</option>
+            </select>
+            <label class="toggle" title="Show 30-day price sparkline">
+              <input type="checkbox" id="screener-sparkline"> Show trends
+            </label>
+            <button type="button" id="screener-save">Save screen</button>
+            <select id="screener-saved" title="Load saved screen">
+              <option value="">Saved screens</option>
+            </select>
+            <button type="button" id="screener-delete" title="Delete selected saved screen">Delete</button>
+          </div>
           <div class="table-wrap">
             <table id="screener-table">
               <thead>
                 <tr>
-                  <th>Symbol</th><th>Name</th><th>Type</th><th>Price</th>
+                  <th>Symbol</th><th>Name</th><th>Type</th><th></th><th>Price</th>
                   <th>Chg %</th><th>Mkt Cap</th><th>P/E</th><th>Div Yld</th>
+                  <th>ROE %</th><th>Debt/Equity</th><th>Earnings Growth %</th>
+                  <th>Beta</th>
+                  <th>Short Int %</th>
                 </tr>
               </thead>
               <tbody></tbody>

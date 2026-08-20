@@ -11,6 +11,7 @@ import { getCboeOptionChain } from '../../lib/cboe.js';
 import { getXbrlTrend } from '../../lib/xbrl.js';
 import { getRetailSentiment } from '../../lib/stocktwits.js';
 import { getEarnings, getRecommendations, getCompanyNews } from '../../lib/finnhub.js';
+import { getNasdaqQuote } from '../../lib/nasdaq.js';
 import { json, corsPreflight } from '../../lib/http.js';
 import { retryFetch } from '../../lib/cache.js';
 import { summarizePriceAction } from '../../lib/priceAction.js';
@@ -415,7 +416,20 @@ async function handleSignals(request, params) {
     companyName = quote?.name || '';
     if (quote?.price != null) result.price = quote.price;
     result.name = companyName || symbol;
-  } catch { /* not critical */ }
+  } catch {
+    // Nasdaq fallback: if Yahoo quotes failed entirely, still surface a live
+    // price so the page never shows a blank quote strip.
+    const nasdaq = await getNasdaqQuote(symbol).catch(() => null);
+    if (nasdaq?.price != null) {
+      quote = nasdaq;
+      result.price = nasdaq.price;
+      result.name = nasdaq.name || symbol;
+      result.degraded = true;
+      result.errors.push('quote: degraded (Nasdaq fallback)');
+    } else {
+      result.name = symbol;
+    }
+  }
 
   // Each source gets its own AbortController so a deadline miss actually stops
   // the upstream fetch + parse instead of burning CPU in the background.

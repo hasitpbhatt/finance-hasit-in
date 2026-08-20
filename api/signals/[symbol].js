@@ -11,6 +11,7 @@ import { getCboeOptionChain } from '../../lib/cboe.js';
 import { getXbrlTrend } from '../../lib/xbrl.js';
 import { getRetailSentiment } from '../../lib/stocktwits.js';
 import { getEarnings, getRecommendations, getCompanyNews } from '../../lib/finnhub.js';
+import { getNasdaqQuote } from '../../lib/nasdaq.js';
 import { json, corsPreflight } from '../../lib/http.js';
 import { retryFetch } from '../../lib/cache.js';
 import { summarizePriceAction } from '../../lib/priceAction.js';
@@ -415,7 +416,20 @@ async function handleSignals(request, params) {
     companyName = quote?.name || '';
     if (quote?.price != null) result.price = quote.price;
     result.name = companyName || symbol;
-  } catch { /* not critical */ }
+  } catch {
+    // Nasdaq fallback: if Yahoo quotes failed entirely, still surface a live
+    // price so the page never shows a blank quote strip.
+    const nasdaq = await getNasdaqQuote(symbol).catch(() => null);
+    if (nasdaq?.price != null) {
+      quote = nasdaq;
+      result.price = nasdaq.price;
+      result.name = nasdaq.name || symbol;
+      result.degraded = true;
+      result.errors.push('quote: degraded (Nasdaq fallback)');
+    } else {
+      result.name = symbol;
+    }
+  }
 
   // Each source gets its own AbortController so a deadline miss actually stops
   // the upstream fetch + parse instead of burning CPU in the background.
@@ -733,6 +747,52 @@ async function handleSignals(request, params) {
   } catch {
     result.narrative = { available: false, reason: 'error' };
   }
+
+  // --- Catalyst: "why now?" — most salient recent signal for Paulson/Marks second-level view ---
+  result.catalyst = (() => {
+    const reasons = [];
+
+    // 1. Earnings surprise
+    const latestSurprise = result.earnings?.surpriseHistory?.[0];
+    if (latestSurprise?.surprisePercent != null) {
+      const pct = latestSurprise.surprisePercent;
+      const q = latestSurprise.quarter || '';
+      if (pct >= 5) reasons.push(`beat Q earnings by ${pct.toFixed(0)}%`);
+      else if (pct <= -5) reasons.push(`missed Q earnings by ${Math.abs(pct).toFixed(0)}%`);
+
+      // Beat streak (consecutive beats)
+      const streak = result.earnings?.beatStreak || 0;
+      if (streak >= 4) reasons.push(`${streak}-quarter beat streak`);
+    }
+
+    // 2. Analyst upgrade / downgrade (Finnhub: most recent vs prior period)
+    const recs = result.finnhubRecommendations;
+    if (recs?.period) {
+      const strongBuyBuy = (recs.strongBuy || 0) + (recs.buy || 0);
+      const sellSs = (recs.strongSell || 0) + (recs.sell || 0);
+      if (strongBuyBuy >= 4) reasons.push('strong analyst consensus');
+      else if (sellSs >= 3) reasons.push('heavy analyst sell calls');
+    }
+
+    // 3. News attention spike
+    if (result.signalFlags?.attentionSpike) reasons.push('unusual media attention');
+
+    // 4. Insider buying (net)
+    if (result.insiderAvailable && result.insiderTrades?.length) {
+      let netBuy = 0;
+      for (const t of result.insiderTrades) {
+        if (t.code === 'P') netBuy += t.shares || 0;
+        else if (t.code === 'S') netBuy -= t.shares || 0;
+      }
+      if (netBuy > 0) reasons.push('insider buying');
+    }
+
+    // 5. Technical breakout
+    if (result.technical?.breakout) reasons.push('price breakout');
+
+    if (!reasons.length) return null;
+    return reasons.slice(0, 2).join(' · ');
+  })();
 
   return json(result, {
     headers: {

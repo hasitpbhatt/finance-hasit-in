@@ -18,9 +18,14 @@ export async function GET(request) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>${raw} — Investable</title>
     <meta name="description" content="Free investment research for ${raw}. Analyst ratings, insider trades, options, fundamentals, and AI summary." />
+    <link rel="canonical" href="https://finance.hasit.in/s/${raw}" />
     <meta property="og:title" content="${raw} — Investable" />
     <meta property="og:description" content="Free investment research for ${raw}. Analyst ratings, insider trades, options, fundamentals, and AI summary." />
     <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://finance.hasit.in/s/${raw}" />
+    <script type="application/ld+json">
+      {"@context":"https://schema.org","@type":"FinancialProduct","name":"${raw}","url":"https://finance.hasit.in/s/${raw}","description":"Free investment research for ${raw}: ratings, insiders, options, fundamentals, AI verdict.","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}
+    </script>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>

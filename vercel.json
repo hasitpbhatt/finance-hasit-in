@@ -7,7 +7,8 @@
     "api/options/[symbol].js": { "maxDuration": 30 }
   },
   "rewrites": [
-    { "source": "/s/:symbol", "destination": "/api/s/:symbol" }
+    { "source": "/s/:symbol", "destination": "/api/s/:symbol" },
+    { "source": "/sitemap.xml", "destination": "/api/sitemap.xml" }
   ],
   "headers": [
     {

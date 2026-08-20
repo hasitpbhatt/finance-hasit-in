@@ -127,6 +127,12 @@ function plainVerdictSentence(d, s) {
   else if (v > -10) take = 'The long-term signals are mixed — no clear call either way.';
   else if (v > -30) take = 'Long-term signals look soft. Be careful.';
   else take = 'Long-term signals look weak. We would be wary here.';
+
+  // Paulson/second-level: "why now?" — the catalyst or contrarian signal
+  if (s.catalyst) {
+    take = 'Right now: ' + s.catalyst + '. ' + take;
+  }
+
   const vv = s.value;
   if (vv?.grahamFairValue != null && d.price != null) {
     const gap = ((d.price - vv.grahamFairValue) / vv.grahamFairValue) * 100;
